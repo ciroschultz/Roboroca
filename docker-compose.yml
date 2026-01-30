@@ -1,0 +1,127 @@
+# ===========================================
+# Roboroça - Docker Compose
+# ===========================================
+# Ambiente de desenvolvimento local
+
+version: '3.8'
+
+services:
+  # -----------------
+  # Backend API
+  # -----------------
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: roboroca-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://roboroca:roboroca123@db:5432/roboroca
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-supersecretkey123}
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - roboroca-network
+
+  # -----------------
+  # Celery Worker
+  # -----------------
+  celery:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
+    container_name: roboroca-celery
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://roboroca:roboroca123@db:5432/roboroca
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-supersecretkey123}
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./uploads:/app/uploads
+      - ./ml_models:/app/ml_models:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - roboroca-network
+
+  # -----------------
+  # PostgreSQL + PostGIS
+  # -----------------
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: roboroca-db
+    environment:
+      - POSTGRES_USER=roboroca
+      - POSTGRES_PASSWORD=roboroca123
+      - POSTGRES_DB=roboroca
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roboroca -d roboroca"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - roboroca-network
+
+  # -----------------
+  # Redis
+  # -----------------
+  redis:
+    image: redis:7-alpine
+    container_name: roboroca-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - roboroca-network
+
+  # -----------------
+  # Flower (Celery Monitor)
+  # -----------------
+  flower:
+    image: mher/flower:2.0
+    container_name: roboroca-flower
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery
+    restart: unless-stopped
+    networks:
+      - roboroca-network
+
+# -----------------
+# Volumes
+# -----------------
+volumes:
+  postgres_data:
+  redis_data:
+
+# -----------------
+# Networks
+# -----------------
+networks:
+  roboroca-network:
+    driver: bridge

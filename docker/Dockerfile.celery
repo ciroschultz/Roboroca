@@ -1,0 +1,48 @@
+# ===========================================
+# Roboroça Celery Worker - Dockerfile
+# ===========================================
+
+FROM python:3.11-slim
+
+# Metadados
+LABEL maintainer="Roboroça Team"
+LABEL description="Roboroça Celery Worker"
+
+# Variáveis de ambiente
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Instalar dependências do sistema (incluindo GDAL para processamento de imagens)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    libgdal-dev \
+    libgeos-dev \
+    libproj-dev \
+    gdal-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Definir variáveis GDAL
+ENV CPLUS_INCLUDE_PATH=/usr/include/gdal \
+    C_INCLUDE_PATH=/usr/include/gdal
+
+# Criar diretório de trabalho
+WORKDIR /app
+
+# Copiar requirements e instalar dependências
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Copiar código da aplicação
+COPY backend/ ./backend/
+
+# Criar usuário não-root
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Comando padrão (Celery worker)
+CMD ["celery", "-A", "backend.tasks.celery_app", "worker", "--loglevel=info"]

@@ -1,0 +1,170 @@
+# ===========================
+# Roboroça .gitignore
+# ===========================
+
+# -----------------
+# Python
+# -----------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# -----------------
+# Jupyter Notebook
+# -----------------
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# -----------------
+# Node.js / Frontend
+# -----------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/.cache/
+
+# -----------------
+# IDE
+# -----------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# -----------------
+# OS
+# -----------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# -----------------
+# Docker
+# -----------------
+docker-compose.override.yml
+
+# -----------------
+# Environment
+# -----------------
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# -----------------
+# Logs
+# -----------------
+logs/
+*.log
+
+# -----------------
+# Database
+# -----------------
+*.db
+*.sqlite3
+
+# -----------------
+# ML Models (grandes)
+# -----------------
+ml_models/*.pt
+ml_models/*.pth
+ml_models/*.onnx
+ml_models/*.h5
+!ml_models/.gitkeep
+
+# -----------------
+# Uploads e dados locais
+# -----------------
+uploads/
+data/raw/
+data/processed/
+!data/.gitkeep
+
+# -----------------
+# Imagens de teste grandes
+# -----------------
+*.tif
+*.tiff
+*.geotiff
+!tests/fixtures/*.tif
+
+# -----------------
+# Secrets
+# -----------------
+secrets/
+*.pem
+*.key
+credentials.json
+
+# -----------------
+# Celery
+# -----------------
+celerybeat-schedule
+celerybeat.pid
+
+# -----------------
+# Coverage reports
+# -----------------
+htmlcov/
+.coverage
+.coverage.*
