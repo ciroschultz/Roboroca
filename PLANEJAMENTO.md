@@ -1,208 +1,434 @@
-# Roboroça - Planejamento do Projeto
+# Roboroça - Planejamento Técnico
 
-## 1. Visão Geral
+## 1. Visão do Produto
 
-**Roboroça** é um sistema inteligente de análise de imagens aéreas para agricultura. O objetivo é transformar imagens de drone e satélite em relatórios completos e acionáveis para produtores rurais.
+### 1.1 O Que é o Roboroça?
 
-### Objetivo Principal
-Ao carregar imagens de drone ou satélite, o sistema deve gerar automaticamente um relatório completo sobre a propriedade, incluindo todas as informações possíveis extraídas das imagens.
+O **Roboroça** é um sistema inteligente de análise de imagens aéreas para agricultura. O objetivo é transformar imagens de drone e satélite em relatórios completos e acionáveis para produtores rurais.
 
----
+### 1.2 Plataformas Suportadas
 
-## 2. Funcionalidades do Sistema
+| Plataforma | Tecnologia | Status |
+|------------|------------|--------|
+| Web (Desktop) | Next.js | Em desenvolvimento |
+| Web (Mobile) | Next.js (responsivo) | Em desenvolvimento |
+| Mobile App | PWA / React Native | Futuro |
+| Desktop App | Electron (opcional) | Futuro |
 
-### 2.1 Análises Disponíveis
+### 1.3 Proposta de Valor
 
-| Análise | Descrição | Output |
-|---------|-----------|--------|
-| **Contagem de Plantas** | Detecta e conta plantas individuais | Quantidade total, plantas/hectare |
-| **Estado das Plantas** | Classifica saúde das plantas | Saudável, estressada, crítica (%) |
-| **Área Total** | Calcula área da região analisada | Hectares |
-| **Área Agriculturável** | Identifica áreas próprias para cultivo | Hectares, mapa |
-| **Estimativa de Altura** | Altura média da vegetação | Metros, mapa de altura |
-| **Análise de Solo** | Identifica áreas com deficiências | Recomendações de correção |
-| **Índices de Vegetação** | NDVI, NDWI, EVI, SAVI | Mapas de calor, estatísticas |
-| **Classificação de Uso** | Floresta, pasto, agricultura, etc. | Mapa classificado, áreas por classe |
-| **Qualidade da Produção** | Estimativa de produtividade | Score, áreas problemáticas |
-
-### 2.2 Tipos de Imagem Suportados
-- Imagens de drone (DJI, etc.)
-- Imagens de satélite (Sentinel-2, Landsat)
-- Formatos: GeoTIFF, TIFF, JPEG, PNG
+- **Simplicidade**: Upload → Processamento → Relatório
+- **Múltiplas Fontes**: Drone (foto/vídeo) e Satélite
+- **GPS em Tempo Real**: Análise da área ao redor do usuário
+- **Relatórios Profissionais**: PDF com gráficos e recomendações
 
 ---
 
-## 3. Arquitetura Técnica
+## 2. Fluxo do Sistema
 
-### 3.1 Stack Tecnológico
+### 2.1 Fluxo Principal
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      FRONTEND                                │
-│  Next.js + MapLibre GL + TailwindCSS                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      BACKEND API                             │
-│  FastAPI + Celery (processamento assíncrono)                │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  PROCESSAMENTO DE IMAGENS                    │
-│  Rasterio + GeoPandas + OpenCV + NumPy                      │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    MACHINE LEARNING                          │
-│  PyTorch + Segmentation Models + YOLO                       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      BANCO DE DADOS                          │
-│  PostgreSQL + PostGIS (dados geoespaciais)                  │
-│  SQLite (desenvolvimento local)                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 Modelos de Machine Learning
-
-| Modelo | Uso | Biblioteca |
-|--------|-----|------------|
-| **U-Net** | Segmentação semântica (uso do solo) | segmentation-models-pytorch |
-| **DeepLabV3+** | Segmentação precisa de bordas | segmentation-models-pytorch |
-| **YOLOv8** | Detecção de plantas individuais | ultralytics |
-| **SegFormer** | Classificação avançada | transformers |
-
-### 3.3 Datasets para Treinamento
-
-| Dataset | Uso |
-|---------|-----|
-| **EuroSAT** | Classificação de uso do solo |
-| **PASTIS** | Segmentação agrícola |
-| **UC Merced** | Uso do solo aéreo |
-| **Fields of The World** | Limites de campos |
-
----
-
-## 4. Bibliotecas Python
-
-### Processamento Geoespacial
-```python
-rasterio        # Leitura de GeoTIFF
-geopandas       # Dados vetoriais
-shapely         # Geometrias
-pyproj          # Projeções
-rio-tiler       # Tiles web
-```
-
-### Machine Learning
-```python
-torch           # Deep learning
-segmentation_models_pytorch  # U-Net, DeepLab
-ultralytics     # YOLOv8
-albumentations  # Augmentação
-```
-
-### Índices de Vegetação
-```python
-# NDVI (Normalized Difference Vegetation Index)
-ndvi = (nir - red) / (nir + red)
-
-# NDWI (Normalized Difference Water Index)
-ndwi = (green - nir) / (green + nir)
-
-# EVI (Enhanced Vegetation Index)
-evi = 2.5 * ((nir - red) / (nir + 6*red - 7.5*blue + 1))
-
-# SAVI (Soil Adjusted Vegetation Index)
-savi = ((nir - red) / (nir + red + L)) * (1 + L)  # L = 0.5
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FLUXO DO USUÁRIO                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   ENTRADA ──────────────────────────────────────────────────────────►   │
+│      │                                                                   │
+│      ├── Caminho 1: Upload de Imagens                                   │
+│      │      │                                                           │
+│      │      ├── Escolher: DRONE ou SATÉLITE                            │
+│      │      │                                                           │
+│      │      ├── DRONE:                                                  │
+│      │      │   ├── Múltiplas fotos (mesma área)                       │
+│      │      │   ├── 1 vídeo                                            │
+│      │      │   └── Vídeo + fotos (melhor análise)                     │
+│      │      │                                                           │
+│      │      ├── SATÉLITE:                                               │
+│      │      │   └── Múltiplas imagens (mesma área)                     │
+│      │      │                                                           │
+│      │      └── Dar nome ao projeto ──► PROCESSAR                      │
+│      │                                                                   │
+│      ├── Caminho 2: GPS em Tempo Real                                   │
+│      │      │                                                           │
+│      │      ├── Obter localização do dispositivo                       │
+│      │      ├── Buscar imagem de satélite da região                    │
+│      │      ├── Definir área de interesse (raio/polígono)              │
+│      │      ├── Analisar área                                          │
+│      │      └── Criar projeto ──► PROCESSAR                            │
+│      │                                                                   │
+│      └── Caminho 3: Dashboard (se já tem projetos)                      │
+│             └── Ver resumo de todos os projetos                         │
+│                                                                          │
+│   PROCESSAMENTO ────────────────────────────────────────────────────►   │
+│      │                                                                   │
+│      ├── Pré-processamento                                              │
+│      │   ├── Leitura de imagens (Rasterio, OpenCV)                     │
+│      │   ├── Extração de frames (se vídeo)                             │
+│      │   ├── Merge de múltiplas imagens                                │
+│      │   └── Normalização                                               │
+│      │                                                                   │
+│      ├── Análise de Índices                                             │
+│      │   ├── NDVI (vegetação)                                          │
+│      │   ├── NDWI (água)                                               │
+│      │   ├── EVI, SAVI                                                 │
+│      │   └── Estatísticas                                               │
+│      │                                                                   │
+│      ├── Machine Learning                                               │
+│      │   ├── Classificação de uso do solo (U-Net)                      │
+│      │   ├── Detecção de plantas (YOLO)                                │
+│      │   ├── Análise de saúde                                          │
+│      │   └── Estimativa de altura                                       │
+│      │                                                                   │
+│      └── Geração de Resultados                                          │
+│          ├── Mapas de calor                                             │
+│          ├── Vetorização                                                │
+│          ├── Cálculo de áreas                                           │
+│          └── Recomendações                                              │
+│                                                                          │
+│   SAÍDA ────────────────────────────────────────────────────────────►   │
+│      │                                                                   │
+│      ├── Projeto Criado (em "Meus Projetos")                           │
+│      │                                                                   │
+│      ├── Dashboard Atualizado (dados agregados)                         │
+│      │                                                                   │
+│      ├── Perfil do Projeto                                              │
+│      │   ├── Cards de métricas                                         │
+│      │   ├── Gráficos (pizza, barras, linhas)                          │
+│      │   ├── Alertas e recomendações                                   │
+│      │   └── Visualizar no mapa                                         │
+│      │                                                                   │
+│      └── Relatório PDF                                                  │
+│          ├── Resumo executivo                                           │
+│          ├── Mapas e gráficos                                           │
+│          └── Recomendações                                              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. Fluxo de Processamento
+## 3. Arquitetura das Seções
 
+### 3.1 Sidebar (Menu Lateral)
 ```
-1. UPLOAD
-   └── Usuário envia imagem de drone/satélite
+┌─────────────────────┐
+│ [Logo] Roboroça     │
+├─────────────────────┤
+│ ○ Dashboard         │
+│ ○ Meus Projetos     │
+│ ○ Upload de Imagens │
+│ ○ Visualizar Mapa   │
+│ ▼ Análises          │
+│   ├─ NDVI           │
+│   ├─ NDWI           │
+│   ├─ Uso do Solo    │
+│   ├─ Contagem       │
+│   └─ Saúde          │
+│ ○ Relatórios        │
+│ ○ Configurações     │
+│ ○ Ajuda             │
+├─────────────────────┤
+│ [Avatar] Usuário    │
+└─────────────────────┘
+```
 
-2. PRÉ-PROCESSAMENTO
-   ├── Extração de metadados (coordenadas, resolução)
-   ├── Correção radiométrica
-   ├── Normalização
-   └── Geração de tiles
+### 3.2 Dashboard
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Dashboard                                        [Busca] [Notif] [User] │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                   │
+│  │ ÁREA     │ │ PLANTAS  │ │ NDVI     │ │ SAÚDE    │                   │
+│  │ 10.5k ha │ │ 48.2 mil │ │ 0.68     │ │ 92%      │                   │
+│  │ ↑ 12.5%  │ │ ↑ 8.3%   │ │ ↑ 5.2%   │ │ ↓ 2.1%   │                   │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘                   │
+│                                                                          │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                    │
+│  │ 🚨 ALERTAS   │ │ ACESSO       │ │ PROJETOS     │                    │
+│  │ 2 projetos   │ │ RÁPIDO       │ │ ATIVOS       │                    │
+│  │ críticos     │ │ [Último Proj]│ │ 12           │                    │
+│  └──────────────┘ └──────────────┘ └──────────────┘                    │
+│                                                                          │
+│  ┌────────────────────────┐ ┌────────────────────────┐                 │
+│  │ USO DO SOLO (Total)    │ │ SAÚDE (Média)          │                 │
+│  │       [Gráfico Pizza]  │ │      [Gráfico Pizza]   │                 │
+│  └────────────────────────┘ └────────────────────────┘                 │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ PROJETOS RECENTES                                                 │  │
+│  │ ┌────────────────────────────────────────────────────────────┐   │  │
+│  │ │ Fazenda São João    │ 450 ha │ 28/01 │ ✓ Concluído        │   │  │
+│  │ │ 🚨 Sítio Esperança  │ 120 ha │ 25/01 │ ⚠ Crítico          │   │  │
+│  │ │ Propriedade XYZ     │ 280 ha │ 20/01 │ ✓ Concluído        │   │  │
+│  │ └────────────────────────────────────────────────────────────┘   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-3. ANÁLISE BÁSICA
-   ├── Cálculo de índices (NDVI, NDWI, etc.)
-   ├── Geração de mapas de calor
-   └── Estatísticas básicas
+### 3.3 Upload de Imagens
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Upload de Imagens                                                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  NOME DO PROJETO: [________________________________]                     │
+│                                                                          │
+│  SELECIONE A FONTE:                                                      │
+│  ┌─────────────────────┐  ┌─────────────────────┐                       │
+│  │      🛩️ DRONE       │  │    🛰️ SATÉLITE     │                       │
+│  │                     │  │                     │                       │
+│  │ • Múltiplas fotos   │  │ • Múltiplas imagens │                       │
+│  │ • 1 vídeo           │  │                     │                       │
+│  │ • Vídeo + fotos     │  │                     │                       │
+│  └─────────────────────┘  └─────────────────────┘                       │
+│                                                                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                                                                    │  │
+│  │     📁 Arraste arquivos aqui ou clique para selecionar            │  │
+│  │                                                                    │  │
+│  │     Formatos: JPEG, PNG, TIFF, GeoTIFF, MP4, MOV                  │  │
+│  │     Todas as imagens devem ser da MESMA ÁREA                      │  │
+│  │                                                                    │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ARQUIVOS SELECIONADOS:                                                  │
+│  ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐                               │
+│  │ img1  │ │ img2  │ │ img3  │ │ video │                               │
+│  │ ✓     │ │ ✓     │ │ ✓     │ │ ✓     │                               │
+│  └───────┘ └───────┘ └───────┘ └───────┘                               │
+│                                                                          │
+│              [ PROCESSAR E CRIAR PROJETO ]                              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-4. MACHINE LEARNING
-   ├── Classificação de uso do solo
-   ├── Detecção de plantas
-   ├── Análise de saúde
-   └── Estimativa de altura
-
-5. PÓS-PROCESSAMENTO
-   ├── Vetorização de resultados
-   ├── Cálculo de áreas
-   └── Geração de recomendações
-
-6. RELATÓRIO
-   ├── Compilação de resultados
-   ├── Geração de PDF
-   └── Exportação de dados
+### 3.4 Visualizar Mapa (2 Modos)
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Visualizar Mapa                                                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  [ MODO 1: Ver Projeto ]  [ MODO 2: GPS ao Vivo ]                       │
+│                                                                          │
+│  ═══════════════════════════════════════════════════════════════════    │
+│                                                                          │
+│  MODO 1: VER PROJETO EXISTENTE                                          │
+│  ┌─────────────────────────────────────────┐ ┌────────────────────┐    │
+│  │                                         │ │ CAMADAS            │    │
+│  │                                         │ │ ☑ RGB              │    │
+│  │         [MAPA COM IMAGEM DO            │ │ ☐ NDVI             │    │
+│  │          PROJETO E CAMADAS             │ │ ☐ NDWI             │    │
+│  │          SOBREPOSTAS]                   │ │ ☐ Classificação    │    │
+│  │                                         │ │ ☐ Plantas          │    │
+│  │                                         │ │                    │    │
+│  │  [+] [-] [📐] [📍]                      │ │ DADOS              │    │
+│  │                                         │ │ Área: 450 ha       │    │
+│  │                                         │ │ NDVI: 0.72         │    │
+│  └─────────────────────────────────────────┘ └────────────────────┘    │
+│                                                                          │
+│  ═══════════════════════════════════════════════════════════════════    │
+│                                                                          │
+│  MODO 2: GPS EM TEMPO REAL (⭐ DIFERENCIAL)                             │
+│  ┌─────────────────────────────────────────┐ ┌────────────────────┐    │
+│  │                                         │ │ SUA LOCALIZAÇÃO    │    │
+│  │                                         │ │ Lat: -23.5505      │    │
+│  │         [MAPA DE SATÉLITE DA           │ │ Lon: -46.6333      │    │
+│  │          REGIÃO ATUAL DO               │ │                    │    │
+│  │          USUÁRIO]                       │ │ DEFINIR ÁREA       │    │
+│  │                                         │ │ ○ Raio: [500m]     │    │
+│  │           📍                            │ │ ○ Desenhar         │    │
+│  │                                         │ │                    │    │
+│  │  [+] [-] [🎯 Centralizar]              │ │ [ANALISAR ÁREA]    │    │
+│  │                                         │ │                    │    │
+│  └─────────────────────────────────────────┘ │ [CRIAR PROJETO]    │    │
+│                                               └────────────────────┘    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 6. Estrutura de Relatório
+## 4. Modelo de Dados
 
-O relatório final gerado pelo sistema inclui:
+### 4.1 Entidades Principais
 
-### Seção 1: Informações Gerais
-- Nome do projeto/propriedade
-- Data da imagem
-- Área total analisada
-
-### Seção 2: Uso do Solo
-- Mapa de classificação
-- Tabela de áreas por classe
-- Gráfico de distribuição
-
-### Seção 3: Vegetação
-- Mapa NDVI
-- Estatísticas (min, max, média)
-- Áreas de atenção
-
-### Seção 4: Plantas
-- Contagem total
-- Densidade por hectare
-- Estado de saúde
-
-### Seção 5: Recomendações
-- Áreas que precisam de atenção
-- Sugestões de correção de solo
-- Previsão de produtividade
+```
+┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+│   USER      │       │   PROJECT   │       │   IMAGE     │
+├─────────────┤       ├─────────────┤       ├─────────────┤
+│ id          │──1:N─▶│ id          │──1:N─▶│ id          │
+│ email       │       │ user_id     │       │ project_id  │
+│ password    │       │ name        │       │ file_path   │
+│ name        │       │ source_type │       │ file_type   │
+│ created_at  │       │ status      │       │ metadata    │
+└─────────────┘       │ area_ha     │       │ created_at  │
+                      │ created_at  │       └─────────────┘
+                      └─────────────┘
+                            │
+                            │ 1:1
+                            ▼
+                      ┌─────────────┐
+                      │  ANALYSIS   │
+                      ├─────────────┤
+                      │ id          │
+                      │ project_id  │
+                      │ ndvi_mean   │
+                      │ ndwi_mean   │
+                      │ plant_count │
+                      │ healthy_%   │
+                      │ stressed_%  │
+                      │ critical_%  │
+                      │ land_use    │ (JSON)
+                      │ height_dist │ (JSON)
+                      │ created_at  │
+                      └─────────────┘
+```
 
 ---
 
-## 7. Referências e Recursos
+## 5. APIs Externas
 
-### Repositórios Úteis
-- [satellite-image-deep-learning/techniques](https://github.com/satellite-image-deep-learning/techniques)
-- [Awesome-Precision-Agriculture](https://github.com/px39n/Awesome-Precision-Agriculture)
-- [segmentation_models.pytorch](https://github.com/qubvel/segmentation_models.pytorch)
-- [ultralytics/yolov8](https://github.com/ultralytics/ultralytics)
+### 5.1 Imagens de Satélite
 
-### Documentação
-- [Rasterio](https://rasterio.readthedocs.io/)
-- [GeoPandas](https://geopandas.org/)
-- [torchgeo](https://torchgeo.readthedocs.io/)
+| Serviço | Dados | Autenticação | Custo |
+|---------|-------|--------------|-------|
+| [Sentinel Hub](https://www.sentinel-hub.com/) | Sentinel-2, Landsat | API Key | Freemium |
+| [Copernicus](https://dataspace.copernicus.eu/) | Sentinel-1/2/3 | Conta gratuita | Gratuito |
+| [AWS Earth](https://aws.amazon.com/earth/) | Landsat, MODIS | AWS Account | Pay-per-use |
+| [Google Earth Engine](https://earthengine.google.com/) | Multi-fonte | Google Account | Gratuito |
+
+### 5.2 Mapas Base
+
+| Serviço | Uso | Link |
+|---------|-----|------|
+| OpenStreetMap | Mapas vetoriais | [osmfoundation.org](https://osmfoundation.org/) |
+| Mapbox | Tiles customizados | [mapbox.com](https://www.mapbox.com/) |
+| Google Maps | Mapas e satélite | [developers.google.com/maps](https://developers.google.com/maps) |
+
+---
+
+## 6. Stack Tecnológica Detalhada
+
+### 6.1 Frontend
+
+```
+Next.js 14
+├── React 18
+├── TypeScript
+├── TailwindCSS
+├── Recharts (gráficos)
+├── Leaflet (mapas)
+├── react-dropzone (upload)
+└── lucide-react (ícones)
+```
+
+### 6.2 Backend
+
+```
+FastAPI
+├── Python 3.11+
+├── SQLAlchemy (ORM)
+├── Pydantic (validação)
+├── Celery (tarefas assíncronas)
+├── Redis (cache/filas)
+└── JWT (autenticação)
+```
+
+### 6.3 Processamento
+
+```
+Processamento de Imagens
+├── Rasterio (GeoTIFF)
+├── OpenCV (JPEG/PNG)
+├── NumPy (arrays)
+├── GeoPandas (vetores)
+└── Shapely (geometrias)
+
+Machine Learning
+├── PyTorch
+├── TorchGeo
+├── segmentation-models-pytorch
+├── Ultralytics (YOLO)
+└── Albumentations
+```
+
+### 6.4 Banco de Dados
+
+```
+PostgreSQL
+├── PostGIS (geoespacial)
+└── Dados principais
+
+Redis
+├── Cache
+├── Filas Celery
+└── Sessões
+```
+
+---
+
+## 7. Padrões de Código
+
+### 7.1 Estrutura de Pastas
+
+```
+roboroca/
+├── backend/
+│   ├── api/
+│   │   ├── routes/           # Endpoints
+│   │   ├── schemas/          # Pydantic models
+│   │   └── dependencies/     # Auth, etc
+│   ├── core/                 # Config, DB, Security
+│   ├── models/               # SQLAlchemy models
+│   ├── services/             # Lógica de negócio
+│   │   ├── image_processing/
+│   │   ├── ml/
+│   │   ├── analysis/
+│   │   └── satellite/
+│   ├── tasks/                # Celery tasks
+│   └── utils/                # Helpers
+├── frontend/
+│   ├── src/
+│   │   ├── app/              # Pages (App Router)
+│   │   ├── components/       # Componentes React
+│   │   ├── hooks/            # Custom hooks
+│   │   ├── lib/              # Utilitários
+│   │   └── types/            # TypeScript types
+│   └── public/               # Assets estáticos
+├── ml_models/                # Modelos treinados
+├── notebooks/                # Jupyter notebooks
+├── tests/                    # Testes
+└── docs/                     # Documentação
+```
+
+### 7.2 Convenções
+
+- **Python**: PEP 8, type hints
+- **TypeScript**: ESLint, Prettier
+- **Commits**: Conventional Commits
+- **Branches**: feature/, bugfix/, hotfix/
+
+---
+
+## 8. Segurança
+
+### 8.1 Autenticação
+- JWT com refresh tokens
+- Senha com bcrypt
+- Rate limiting
+
+### 8.2 Dados
+- Validação com Pydantic
+- Sanitização de inputs
+- CORS configurado
+
+### 8.3 Arquivos
+- Validação de tipo MIME
+- Limite de tamanho
+- Armazenamento seguro
 
 ---
 
