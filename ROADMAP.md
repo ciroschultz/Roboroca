@@ -81,30 +81,34 @@
 ## FASE 2: Lapidar Interface (ATUAL)
 
 ### 2.1 Dashboard - Melhorias
-- [ ] Alertas visuais para projetos críticos (badge vermelho)
-- [ ] Card de acesso rápido ao último projeto
+- [x] Alertas visuais para projetos críticos (badge vermelho)
+- [x] Card de acesso rápido ao último projeto
+- [x] Card de projetos em processamento
 - [ ] Notificações de processamento concluído
 - [ ] Gráfico de evolução temporal (se houver múltiplos projetos)
 
 ### 2.2 Upload - Melhorias
-- [ ] Campo para nome do projeto
-- [ ] Seleção de múltiplos arquivos de uma vez
+- [x] Campo para nome do projeto
+- [x] Seleção de múltiplos arquivos de uma vez
 - [ ] Detecção automática se é foto ou vídeo
 - [ ] Preview em grid das imagens selecionadas
 - [ ] Estimativa de tempo de processamento
 - [ ] Validação de formatos suportados
 
 ### 2.3 Mapa - Implementar Modos
-- [ ] **Modo 1**: Carregar imagem do projeto
-  - Exibir imagem georreferenciada
-  - Sobrepor camadas de análise
-  - Mostrar marcadores de detecção
-- [ ] **Modo 2**: GPS em tempo real
-  - Obter localização do dispositivo
-  - Buscar imagem de satélite (Sentinel/Landsat)
-  - Definir área de interesse
-  - Análise instantânea
-  - Botão "Criar Projeto"
+- [x] **Modo 1 - Ver Projeto Existente** (similar ArcGIS/Google Earth Engine)
+  - [x] Seletor de projetos existentes
+  - [x] Exibir imagens originais do projeto (drone/satélite) - UI pronta
+  - [x] Toggle de camadas sobrepostas (NDVI, NDWI, Classificação, Detecções)
+  - [x] Mostrar informações ao clicar (ex: saúde da planta detectada)
+  - [x] Ferramentas: zoom, medição de área, exportar visualização - UI pronta
+- [x] **Modo 2 - Captura via GPS** (⭐ Diferencial)
+  - [x] Botão para ativar localização GPS
+  - [x] Seleção de fonte de imagem (Sentinel-2, Landsat)
+  - [x] Visualizar mapa da região atual - UI pronta
+  - [x] Definir área de interesse (raio ou desenhar polígono)
+  - [x] Cálculo de área estimada
+  - [x] Botões "Analisar Área" e "Criar Projeto" - UI pronta
 
 ### 2.4 Relatório PDF
 - [ ] Template profissional

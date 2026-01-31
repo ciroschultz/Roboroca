@@ -19,6 +19,7 @@ import {
   CheckCircle,
   AlertTriangle,
   Eye,
+  BarChart3,
 } from 'lucide-react'
 import {
   DonutChart,

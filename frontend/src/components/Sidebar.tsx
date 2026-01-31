@@ -110,10 +110,10 @@ export default function Sidebar({ activeItem, onItemClick }: SidebarProps) {
           </div>
           <div>
             <h1 className="text-xl font-bold">
-              <span className="text-[#1B3A5C]">Robo</span>
+              <span className="text-white">Robo</span>
               <span className="text-[#6AAF3D]">roça</span>
             </h1>
-            <p className="text-xs text-gray-400">Automação Agrícola</p>
+            <p className="text-xs text-gray-400 tracking-wider">AUTOMAÇÃO AGRÍCOLA</p>
           </div>
         </div>
       </div>

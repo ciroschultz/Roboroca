@@ -1,8 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Sidebar from '@/components/Sidebar'
 import Header from '@/components/Header'
+import {
+  getProjects,
+  getImages,
+  loadAuthToken,
+  Project as ApiProject,
+} from '@/lib/api'
 import StatCard from '@/components/StatCard'
 import {
   DonutChart,
@@ -26,6 +32,9 @@ import {
   Mountain,
   TrendingUp,
   FileText,
+  AlertTriangle,
+  Clock,
+  ArrowRight,
 } from 'lucide-react'
 
 // Tipo de projeto
@@ -49,14 +58,11 @@ interface Project {
   }
 }
 
-// Estado inicial - sem projetos (primeira vez)
-// Para testar com projetos, descomente o array abaixo
+// Dados fake para demonstração do sistema
 const initialProjects: Project[] = [
-  // Descomente para testar com dados:
-  /*
   {
     id: '1',
-    name: 'Fazenda São João',
+    name: 'Fazenda São João - Talhão Norte',
     createdAt: '28/01/2026',
     status: 'completed',
     sourceType: 'drone',
@@ -87,8 +93,8 @@ const initialProjects: Project[] = [
   },
   {
     id: '2',
-    name: 'Sítio Esperança',
-    createdAt: '25/01/2026',
+    name: 'Sítio Esperança - Área de Milho',
+    createdAt: '27/01/2026',
     status: 'processing',
     sourceType: 'satellite',
     imageCount: 12,
@@ -97,7 +103,7 @@ const initialProjects: Project[] = [
   {
     id: '3',
     name: 'Propriedade Rural XYZ',
-    createdAt: '20/01/2026',
+    createdAt: '25/01/2026',
     status: 'completed',
     sourceType: 'drone',
     imageCount: 32,
@@ -125,7 +131,108 @@ const initialProjects: Project[] = [
       ],
     },
   },
-  */
+  {
+    id: '4',
+    name: 'Fazenda Boa Vista - Soja',
+    createdAt: '22/01/2026',
+    status: 'completed',
+    sourceType: 'satellite',
+    imageCount: 8,
+    area: 850,
+    results: {
+      ndviMean: 0.78,
+      ndwiMean: 0.52,
+      plantCount: 340000,
+      healthyPercentage: 85,
+      stressedPercentage: 12,
+      criticalPercentage: 3,
+      landUse: [
+        { name: 'Agricultura', value: 720, color: '#6AAF3D' },
+        { name: 'Floresta', value: 60, color: '#065F46' },
+        { name: 'Pastagem', value: 40, color: '#F59E0B' },
+        { name: 'Água', value: 20, color: '#3B82F6' },
+        { name: 'Solo Exposto', value: 10, color: '#92400E' },
+      ],
+      heightDistribution: [
+        { altura: '0-1m', quantidade: 85000 },
+        { altura: '1-2m', quantidade: 170000 },
+        { altura: '2-3m', quantidade: 68000 },
+        { altura: '3-4m', quantidade: 12000 },
+        { altura: '>4m', quantidade: 5000 },
+      ],
+    },
+  },
+  {
+    id: '5',
+    name: 'Chácara do Vale - Hortaliças',
+    createdAt: '20/01/2026',
+    status: 'completed',
+    sourceType: 'drone',
+    imageCount: 28,
+    area: 15,
+    results: {
+      ndviMean: 0.58,
+      ndwiMean: 0.62,
+      plantCount: 8500,
+      healthyPercentage: 45,
+      stressedPercentage: 35,
+      criticalPercentage: 20,
+      landUse: [
+        { name: 'Agricultura', value: 12, color: '#6AAF3D' },
+        { name: 'Floresta', value: 1, color: '#065F46' },
+        { name: 'Pastagem', value: 1, color: '#F59E0B' },
+        { name: 'Água', value: 0.5, color: '#3B82F6' },
+        { name: 'Solo Exposto', value: 0.5, color: '#92400E' },
+      ],
+      heightDistribution: [
+        { altura: '0-1m', quantidade: 6800 },
+        { altura: '1-2m', quantidade: 1200 },
+        { altura: '2-3m', quantidade: 400 },
+        { altura: '3-4m', quantidade: 80 },
+        { altura: '>4m', quantidade: 20 },
+      ],
+    },
+  },
+  {
+    id: '6',
+    name: 'Fazenda Santa Rita - Café',
+    createdAt: '18/01/2026',
+    status: 'completed',
+    sourceType: 'drone',
+    imageCount: 62,
+    area: 180,
+    results: {
+      ndviMean: 0.69,
+      ndwiMean: 0.41,
+      plantCount: 95000,
+      healthyPercentage: 78,
+      stressedPercentage: 18,
+      criticalPercentage: 4,
+      landUse: [
+        { name: 'Agricultura', value: 150, color: '#6AAF3D' },
+        { name: 'Floresta', value: 15, color: '#065F46' },
+        { name: 'Pastagem', value: 8, color: '#F59E0B' },
+        { name: 'Água', value: 4, color: '#3B82F6' },
+        { name: 'Solo Exposto', value: 3, color: '#92400E' },
+      ],
+      heightDistribution: [
+        { altura: '0-1m', quantidade: 9500 },
+        { altura: '1-2m', quantidade: 47500 },
+        { altura: '2-3m', quantidade: 28500 },
+        { altura: '3-4m', quantidade: 7600 },
+        { altura: '>4m', quantidade: 1900 },
+      ],
+    },
+  },
+  {
+    id: '7',
+    name: 'Sítio Recanto - Fruticultura',
+    createdAt: '15/01/2026',
+    status: 'error',
+    sourceType: 'drone',
+    imageCount: 15,
+    area: 45,
+  },
 ]
 
 export default function Home() {
@@ -134,6 +241,71 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>(initialProjects)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+
+  // Carregar projetos do backend (se autenticado)
+  useEffect(() => {
+    const token = loadAuthToken()
+    setIsAuthenticated(!!token)
+
+    if (token) {
+      loadProjectsFromApi()
+    } else {
+      setIsLoading(false)
+    }
+  }, [])
+
+  const loadProjectsFromApi = async () => {
+    try {
+      setIsLoading(true)
+      const response = await getProjects(0, 100)
+
+      // Converter projetos da API para o formato local
+      const apiProjects: Project[] = response.projects.map((p: ApiProject) => ({
+        id: String(p.id),
+        name: p.name,
+        createdAt: new Date(p.created_at).toLocaleDateString('pt-BR'),
+        status: p.status === 'completed' ? 'completed' : p.status === 'error' ? 'error' : 'processing',
+        sourceType: 'drone' as const,
+        imageCount: p.image_count || 0,
+        area: p.area_hectares || 0,
+        // Resultados serão carregados quando clicar no projeto
+        results: p.status === 'completed' ? {
+          ndviMean: 0.70,
+          ndwiMean: 0.42,
+          plantCount: 0,
+          healthyPercentage: 75,
+          stressedPercentage: 18,
+          criticalPercentage: 7,
+          landUse: [
+            { name: 'Agricultura', value: Math.floor((p.area_hectares || 100) * 0.7), color: '#6AAF3D' },
+            { name: 'Floresta', value: Math.floor((p.area_hectares || 100) * 0.15), color: '#065F46' },
+            { name: 'Pastagem', value: Math.floor((p.area_hectares || 100) * 0.08), color: '#F59E0B' },
+            { name: 'Água', value: Math.floor((p.area_hectares || 100) * 0.04), color: '#3B82F6' },
+            { name: 'Solo Exposto', value: Math.floor((p.area_hectares || 100) * 0.03), color: '#92400E' },
+          ],
+          heightDistribution: [
+            { altura: '0-1m', quantidade: 10000 },
+            { altura: '1-2m', quantidade: 25000 },
+            { altura: '2-3m', quantidade: 35000 },
+            { altura: '3-4m', quantidade: 15000 },
+            { altura: '>4m', quantidade: 5000 },
+          ],
+        } : undefined,
+      }))
+
+      // Combinar com projetos fake se não houver projetos reais
+      if (apiProjects.length > 0) {
+        setProjects(apiProjects)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar projetos:', error)
+      // Manter projetos fake em caso de erro
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Calcula estatísticas agregadas de todos os projetos
   const completedProjects = projects.filter(p => p.status === 'completed' && p.results)
@@ -198,17 +370,17 @@ export default function Home() {
     setActiveView('project-detail')
   }
 
-  const handleFilesUploaded = (files: File[], sourceType: 'drone' | 'satellite' | null) => {
+  const handleFilesUploaded = (uploadedFiles: File[], sourceType: 'drone' | 'satellite' | null, projectName: string) => {
     if (!sourceType) return
 
     // Simula criação de um novo projeto
     const newProject: Project = {
       id: Date.now().toString(),
-      name: `Novo Projeto - ${new Date().toLocaleDateString('pt-BR')}`,
+      name: projectName,
       createdAt: new Date().toLocaleDateString('pt-BR'),
       status: 'processing',
       sourceType,
-      imageCount: files.length,
+      imageCount: uploadedFiles.length,
       area: Math.floor(Math.random() * 500) + 50, // área aleatória para simulação
     }
 
@@ -271,7 +443,15 @@ export default function Home() {
       case 'upload':
         return (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <UploadZone onFilesUploaded={handleFilesUploaded} />
+            <UploadZone
+              onFilesUploaded={handleFilesUploaded}
+              onUploadComplete={(projectId) => {
+                // Recarregar projetos após upload bem-sucedido
+                if (isAuthenticated) {
+                  loadProjectsFromApi()
+                }
+              }}
+            />
             <div className="space-y-6">
               <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
                 <h3 className="text-white font-semibold mb-4">Como funciona</h3>
@@ -433,6 +613,119 @@ export default function Home() {
               />
             </div>
 
+            {/* Cards de alertas e acesso rápido */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              {/* Card de Alertas */}
+              {(() => {
+                const criticalProjects = completedProjects.filter(p =>
+                  p.results && p.results.criticalPercentage > 10
+                )
+                if (criticalProjects.length > 0) {
+                  return (
+                    <div className="bg-red-900/20 border border-red-700/50 rounded-xl p-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="p-2 bg-red-500/20 rounded-lg">
+                          <AlertTriangle className="text-red-400" size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-red-400 font-semibold">Alertas Críticos</h4>
+                          <p className="text-red-300/70 text-xs">{criticalProjects.length} projeto(s) requer(em) atenção</p>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {criticalProjects.slice(0, 2).map(project => (
+                          <div
+                            key={project.id}
+                            onClick={() => handleProjectClick(project)}
+                            className="flex items-center justify-between p-2 bg-red-950/30 rounded-lg cursor-pointer hover:bg-red-950/50 transition-colors"
+                          >
+                            <span className="text-white text-sm truncate">{project.name}</span>
+                            <span className="text-red-400 text-xs font-medium">
+                              {project.results?.criticalPercentage}% crítico
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                }
+                return (
+                  <div className="bg-green-900/20 border border-green-700/50 rounded-xl p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-green-500/20 rounded-lg">
+                        <Leaf className="text-green-400" size={20} />
+                      </div>
+                      <div>
+                        <h4 className="text-green-400 font-semibold">Tudo em Ordem</h4>
+                        <p className="text-green-300/70 text-xs">Nenhum alerta crítico no momento</p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Card de Acesso Rápido - Último Projeto */}
+              {projects.length > 0 && (
+                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2 bg-blue-500/20 rounded-lg">
+                      <Clock className="text-blue-400" size={20} />
+                    </div>
+                    <div>
+                      <h4 className="text-white font-semibold">Acesso Rápido</h4>
+                      <p className="text-gray-500 text-xs">Último projeto acessado</p>
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => handleProjectClick(projects[0])}
+                    className="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg cursor-pointer hover:bg-gray-800/50 transition-colors"
+                  >
+                    <div>
+                      <p className="text-white text-sm font-medium">{projects[0].name}</p>
+                      <p className="text-gray-500 text-xs">{projects[0].area} ha • {projects[0].createdAt}</p>
+                    </div>
+                    <ArrowRight className="text-gray-500" size={18} />
+                  </div>
+                </div>
+              )}
+
+              {/* Card de Processamento */}
+              {(() => {
+                const processingProjects = projects.filter(p => p.status === 'processing')
+                if (processingProjects.length > 0) {
+                  return (
+                    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="p-2 bg-yellow-500/20 rounded-lg animate-pulse">
+                          <TrendingUp className="text-yellow-400" size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-yellow-400 font-semibold">Em Processamento</h4>
+                          <p className="text-yellow-300/70 text-xs">{processingProjects.length} projeto(s) sendo analisado(s)</p>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {processingProjects.slice(0, 2).map(project => (
+                          <div
+                            key={project.id}
+                            className="flex items-center justify-between p-2 bg-yellow-950/30 rounded-lg"
+                          >
+                            <span className="text-white text-sm truncate">{project.name}</span>
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full bg-yellow-400 rounded-full animate-pulse" style={{ width: '60%' }} />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                }
+                return null
+              })()}
+            </div>
+
             {/* Gráficos principais */}
             {completedProjects.length > 0 && (
               <>
@@ -473,33 +766,51 @@ export default function Home() {
                     </button>
                   </div>
                   <div className="space-y-3">
-                    {projects.slice(0, 5).map(project => (
-                      <div
-                        key={project.id}
-                        onClick={() => handleProjectClick(project)}
-                        className="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg hover:bg-gray-800/50 transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 bg-[#6AAF3D]/20 rounded-lg">
-                            <MapPin className="text-[#6AAF3D]" size={18} />
+                    {projects.slice(0, 5).map(project => {
+                      const isCritical = project.results && project.results.criticalPercentage > 10
+                      return (
+                        <div
+                          key={project.id}
+                          onClick={() => handleProjectClick(project)}
+                          className={`flex items-center justify-between p-3 rounded-lg hover:bg-gray-800/50 transition-colors cursor-pointer ${
+                            isCritical ? 'bg-red-900/20 border border-red-700/30' : 'bg-gray-800/30'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-lg ${isCritical ? 'bg-red-500/20' : 'bg-[#6AAF3D]/20'}`}>
+                              {isCritical ? (
+                                <AlertTriangle className="text-red-400" size={18} />
+                              ) : (
+                                <MapPin className="text-[#6AAF3D]" size={18} />
+                              )}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-white text-sm font-medium">{project.name}</p>
+                                {isCritical && (
+                                  <span className="px-1.5 py-0.5 bg-red-500 text-white text-[10px] font-bold rounded">
+                                    CRÍTICO
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-gray-500 text-xs">{project.area} ha</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-white text-sm font-medium">{project.name}</p>
-                            <p className="text-gray-500 text-xs">{project.area} ha</p>
+                          <div className="text-right">
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              project.status === 'completed'
+                                ? isCritical
+                                  ? 'bg-red-900/30 text-red-400'
+                                  : 'bg-green-900/30 text-green-400'
+                                : 'bg-yellow-900/30 text-yellow-400'
+                            }`}>
+                              {project.status === 'completed' ? (isCritical ? 'Atenção' : 'Concluído') : 'Processando'}
+                            </span>
+                            <p className="text-gray-500 text-xs mt-1">{project.createdAt}</p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <span className={`px-2 py-1 rounded text-xs ${
-                            project.status === 'completed'
-                              ? 'bg-green-900/30 text-green-400'
-                              : 'bg-yellow-900/30 text-yellow-400'
-                          }`}>
-                            {project.status === 'completed' ? 'Concluído' : 'Processando'}
-                          </span>
-                          <p className="text-gray-500 text-xs mt-1">{project.createdAt}</p>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               </>

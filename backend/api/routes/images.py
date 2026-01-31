@@ -6,9 +6,10 @@ Endpoints para upload e gerenciamento de imagens.
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -25,16 +26,33 @@ from backend.api.schemas.image import (
 )
 from backend.api.dependencies.auth import get_current_user
 
+# Serviços de processamento de imagens
+from backend.services.image_processing import (
+    read_metadata,
+    save_thumbnail,
+    is_video_file,
+    get_video_thumbnail,
+    get_video_metadata,
+)
+
 router = APIRouter(prefix="/images")
 
 # Extensões permitidas
-ALLOWED_EXTENSIONS = {".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff"}
+ALLOWED_IMAGE_EXTENSIONS = {".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff"}
+ALLOWED_VIDEO_EXTENSIONS = {".mov", ".mp4", ".avi", ".mkv"}
+ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS
 
 
 def validate_file_extension(filename: str) -> bool:
     """Validar extensão do arquivo."""
     ext = os.path.splitext(filename)[1].lower()
     return ext in ALLOWED_EXTENSIONS
+
+
+def is_image_file(filename: str) -> bool:
+    """Verificar se é arquivo de imagem."""
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in ALLOWED_IMAGE_EXTENSIONS
 
 
 @router.get("/", response_model=ImageListResponse)
@@ -81,10 +99,16 @@ async def upload_image(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload de imagem (drone ou satélite).
+    Upload de imagem ou vídeo (drone ou satélite).
 
-    Formatos aceitos: GeoTIFF, TIFF, JPEG, PNG
+    Formatos aceitos: GeoTIFF, TIFF, JPEG, PNG, MOV, MP4
     Tamanho máximo: 500MB
+
+    O sistema extrai automaticamente:
+    - Metadados GPS (latitude, longitude, altitude)
+    - Dimensões da imagem
+    - Informações da câmera/drone
+    - Gera thumbnail
     """
     # Validar extensão
     if not file.filename or not validate_file_extension(file.filename):
@@ -114,7 +138,9 @@ async def upload_image(
 
     # Criar diretório de upload se não existir
     upload_dir = os.path.join(settings.UPLOAD_DIR, str(current_user.id), str(project_id))
+    thumbnails_dir = os.path.join(upload_dir, "thumbnails")
     os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(thumbnails_dir, exist_ok=True)
 
     file_path = os.path.join(upload_dir, unique_filename)
 
@@ -141,6 +167,56 @@ async def upload_image(
             detail=f"Erro ao salvar arquivo: {str(e)}"
         )
 
+    # Extrair metadados e criar thumbnail
+    width = None
+    height = None
+    center_lat = None
+    center_lon = None
+    capture_date = None
+    thumbnail_path = None
+    file_type = "image"
+
+    try:
+        if is_image_file(file.filename):
+            # Processar imagem
+            metadata = read_metadata(file_path)
+            width = metadata.get('width')
+            height = metadata.get('height')
+            center_lat = metadata.get('gps_latitude')
+            center_lon = metadata.get('gps_longitude')
+            capture_date = metadata.get('capture_date')
+
+            # Gerar thumbnail
+            thumb_filename = f"{os.path.splitext(unique_filename)[0]}_thumb.jpg"
+            thumb_path = os.path.join(thumbnails_dir, thumb_filename)
+            try:
+                save_thumbnail(file_path, thumb_path, size=(400, 400))
+                thumbnail_path = thumb_path
+            except Exception:
+                pass  # Ignorar erro de thumbnail
+
+        elif is_video_file(file_path):
+            # Processar vídeo
+            file_type = "video"
+            try:
+                video_meta = get_video_metadata(file_path)
+                width = video_meta.get('width')
+                height = video_meta.get('height')
+
+                # Gerar thumbnail do vídeo
+                thumb_filename = f"{os.path.splitext(unique_filename)[0]}_thumb.jpg"
+                thumb_path = os.path.join(thumbnails_dir, thumb_filename)
+                try:
+                    get_video_thumbnail(file_path, thumb_path)
+                    thumbnail_path = thumb_path
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+    except Exception:
+        pass  # Continuar mesmo se falhar extração de metadados
+
     # Criar registro no banco
     image = Image(
         filename=unique_filename,
@@ -149,7 +225,12 @@ async def upload_image(
         file_size=file_size,
         mime_type=file.content_type,
         image_type=image_type,
-        source=source,
+        source=source or file_type,
+        width=width,
+        height=height,
+        center_lat=center_lat,
+        center_lon=center_lon,
+        capture_date=capture_date,
         project_id=project_id,
         status="uploaded"
     )
@@ -158,10 +239,149 @@ async def upload_image(
     await db.commit()
     await db.refresh(image)
 
+    # Atualizar coordenadas do projeto se for a primeira imagem com GPS
+    if center_lat and center_lon and not project.latitude:
+        project.latitude = center_lat
+        project.longitude = center_lon
+        await db.commit()
+
     return UploadResponse(
         message="Upload realizado com sucesso",
         image=image
     )
+
+
+@router.post("/upload-multiple", status_code=status.HTTP_201_CREATED)
+async def upload_multiple_images(
+    files: List[UploadFile] = File(...),
+    project_id: int = Form(...),
+    image_type: str = Form(default="drone"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload de múltiplas imagens de uma vez.
+
+    Retorna lista de imagens criadas e erros (se houver).
+    """
+    # Verificar se projeto existe
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Projeto não encontrado"
+        )
+
+    uploaded = []
+    errors = []
+
+    for file in files:
+        try:
+            # Validar extensão
+            if not file.filename or not validate_file_extension(file.filename):
+                errors.append({
+                    "filename": file.filename or "unknown",
+                    "error": "Formato não suportado"
+                })
+                continue
+
+            # Gerar nome único
+            ext = os.path.splitext(file.filename)[1].lower()
+            unique_filename = f"{uuid.uuid4()}{ext}"
+
+            # Criar diretórios
+            upload_dir = os.path.join(settings.UPLOAD_DIR, str(current_user.id), str(project_id))
+            thumbnails_dir = os.path.join(upload_dir, "thumbnails")
+            os.makedirs(upload_dir, exist_ok=True)
+            os.makedirs(thumbnails_dir, exist_ok=True)
+
+            file_path = os.path.join(upload_dir, unique_filename)
+
+            # Salvar arquivo
+            content = await file.read()
+            file_size = len(content)
+
+            if file_size > settings.MAX_UPLOAD_SIZE:
+                errors.append({
+                    "filename": file.filename,
+                    "error": "Arquivo muito grande"
+                })
+                continue
+
+            with open(file_path, "wb") as f:
+                f.write(content)
+
+            # Extrair metadados
+            width = None
+            height = None
+            center_lat = None
+            center_lon = None
+            capture_date = None
+
+            if is_image_file(file.filename):
+                try:
+                    metadata = read_metadata(file_path)
+                    width = metadata.get('width')
+                    height = metadata.get('height')
+                    center_lat = metadata.get('gps_latitude')
+                    center_lon = metadata.get('gps_longitude')
+                    capture_date = metadata.get('capture_date')
+
+                    # Gerar thumbnail
+                    thumb_filename = f"{os.path.splitext(unique_filename)[0]}_thumb.jpg"
+                    thumb_path = os.path.join(thumbnails_dir, thumb_filename)
+                    try:
+                        save_thumbnail(file_path, thumb_path, size=(400, 400))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            # Criar registro
+            image = Image(
+                filename=unique_filename,
+                original_filename=file.filename,
+                file_path=file_path,
+                file_size=file_size,
+                mime_type=file.content_type,
+                image_type=image_type,
+                width=width,
+                height=height,
+                center_lat=center_lat,
+                center_lon=center_lon,
+                capture_date=capture_date,
+                project_id=project_id,
+                status="uploaded"
+            )
+
+            db.add(image)
+            uploaded.append({
+                "filename": file.filename,
+                "id": None  # Será preenchido após commit
+            })
+
+        except Exception as e:
+            errors.append({
+                "filename": file.filename or "unknown",
+                "error": str(e)
+            })
+
+    # Commit em lote
+    await db.commit()
+
+    return {
+        "message": f"{len(uploaded)} arquivo(s) enviado(s) com sucesso",
+        "uploaded_count": len(uploaded),
+        "error_count": len(errors),
+        "errors": errors if errors else None
+    }
 
 
 @router.get("/{image_id}", response_model=ImageResponse)
@@ -185,6 +405,49 @@ async def get_image(
         )
 
     return image
+
+
+@router.get("/{image_id}/thumbnail")
+async def get_image_thumbnail(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Obter thumbnail da imagem."""
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada"
+        )
+
+    # Procurar thumbnail
+    thumb_filename = f"{os.path.splitext(image.filename)[0]}_thumb.jpg"
+    thumb_dir = os.path.join(os.path.dirname(image.file_path), "thumbnails")
+    thumb_path = os.path.join(thumb_dir, thumb_filename)
+
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/jpeg")
+
+    # Se não existir thumbnail, gerar agora
+    try:
+        os.makedirs(thumb_dir, exist_ok=True)
+        if is_image_file(image.original_filename):
+            save_thumbnail(image.file_path, thumb_path)
+        else:
+            get_video_thumbnail(image.file_path, thumb_path)
+        return FileResponse(thumb_path, media_type="image/jpeg")
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Thumbnail não disponível"
+        )
 
 
 @router.get("/{image_id}/metadata", response_model=ImageMetadata)
@@ -245,7 +508,17 @@ async def delete_image(
         try:
             os.remove(image.file_path)
         except Exception:
-            pass  # Ignorar erros ao remover arquivo
+            pass
+
+    # Remover thumbnail
+    thumb_filename = f"{os.path.splitext(image.filename)[0]}_thumb.jpg"
+    thumb_dir = os.path.join(os.path.dirname(image.file_path), "thumbnails")
+    thumb_path = os.path.join(thumb_dir, thumb_filename)
+    if os.path.exists(thumb_path):
+        try:
+            os.remove(thumb_path)
+        except Exception:
+            pass
 
     await db.delete(image)
     await db.commit()

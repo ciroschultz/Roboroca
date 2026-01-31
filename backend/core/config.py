@@ -37,14 +37,18 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",  # Frontend Next.js
+        "http://localhost:3001",  # Frontend Next.js (porta alternativa)
         "http://localhost:8000",  # Backend (Swagger)
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:8000",
     ]
 
     # Upload de Arquivos
     MAX_UPLOAD_SIZE: int = 500 * 1024 * 1024  # 500MB
-    ALLOWED_EXTENSIONS: List[str] = [".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff"]
+    ALLOWED_IMAGE_EXTENSIONS: List[str] = [".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff"]
+    ALLOWED_VIDEO_EXTENSIONS: List[str] = [".mov", ".mp4", ".avi", ".mkv"]
+    ALLOWED_EXTENSIONS: List[str] = [".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff", ".mov", ".mp4", ".avi", ".mkv"]
     UPLOAD_DIR: str = "./uploads"
 
     # DigitalOcean Spaces (S3-compatible)

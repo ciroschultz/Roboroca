@@ -1,7 +1,14 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Upload, Image, Video, Satellite, Plane, X, CheckCircle, AlertCircle } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { Upload, Image, Video, Satellite, Plane, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
+import {
+  createProject,
+  uploadImage,
+  uploadMultipleImages,
+  loadAuthToken,
+  ApiError,
+} from '@/lib/api'
 
 type SourceType = 'drone' | 'satellite' | null
 
@@ -10,19 +17,32 @@ interface UploadedFile {
   name: string
   size: number
   type: string
-  status: 'uploading' | 'success' | 'error'
+  status: 'pending' | 'uploading' | 'success' | 'error'
   progress: number
   preview?: string
+  file: File
+  errorMessage?: string
 }
 
 interface UploadZoneProps {
-  onFilesUploaded?: (files: File[], source: SourceType) => void
+  onUploadComplete?: (projectId: number) => void
+  onFilesUploaded?: (files: File[], source: SourceType, projectName: string) => void
 }
 
-export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
+export default function UploadZone({ onUploadComplete, onFilesUploaded }: UploadZoneProps) {
   const [sourceType, setSourceType] = useState<SourceType>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [files, setFiles] = useState<UploadedFile[]>([])
+  const [projectName, setProjectName] = useState('')
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+
+  // Verificar autenticação ao montar
+  useEffect(() => {
+    const token = loadAuthToken()
+    setIsAuthenticated(!!token)
+  }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -40,38 +60,15 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
       name: file.name,
       size: file.size,
       type: file.type,
-      status: 'uploading' as const,
+      status: 'pending' as const,
       progress: 0,
       preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      file,
     }))
 
     setFiles((prev) => [...prev, ...newFiles])
-
-    // Simular upload
-    newFiles.forEach((file) => {
-      let progress = 0
-      const interval = setInterval(() => {
-        progress += Math.random() * 30
-        if (progress >= 100) {
-          progress = 100
-          clearInterval(interval)
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.id === file.id ? { ...f, progress: 100, status: 'success' as const } : f
-            )
-          )
-        } else {
-          setFiles((prev) =>
-            prev.map((f) => (f.id === file.id ? { ...f, progress } : f))
-          )
-        }
-      }, 200)
-    })
-
-    if (onFilesUploaded) {
-      onFilesUploaded(Array.from(fileList), sourceType)
-    }
-  }, [sourceType, onFilesUploaded])
+    setUploadError(null)
+  }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -88,7 +85,13 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
   }, [sourceType, processFiles])
 
   const removeFile = (id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id))
+    setFiles((prev) => {
+      const file = prev.find(f => f.id === id)
+      if (file?.preview) {
+        URL.revokeObjectURL(file.preview)
+      }
+      return prev.filter((f) => f.id !== id)
+    })
   }
 
   const formatSize = (bytes: number) => {
@@ -97,9 +100,124 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
+  // Upload real usando a API
+  const handleUpload = async () => {
+    if (!projectName.trim() || files.length === 0) return
+
+    setIsProcessing(true)
+    setUploadError(null)
+
+    try {
+      // 1. Criar projeto primeiro
+      const project = await createProject({
+        name: projectName.trim(),
+        description: `Projeto criado via upload - ${sourceType === 'drone' ? 'Imagens de Drone' : 'Imagens de Satélite'}`,
+      })
+
+      // 2. Upload dos arquivos um por um (com progresso)
+      const filesToUpload = files.filter(f => f.status !== 'success')
+
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const uploadFile = filesToUpload[i]
+
+        // Marcar como uploading
+        setFiles(prev => prev.map(f =>
+          f.id === uploadFile.id ? { ...f, status: 'uploading' as const } : f
+        ))
+
+        try {
+          await uploadImage(
+            uploadFile.file,
+            project.id,
+            sourceType as 'drone' | 'satellite',
+            (progress) => {
+              setFiles(prev => prev.map(f =>
+                f.id === uploadFile.id ? { ...f, progress } : f
+              ))
+            }
+          )
+
+          // Marcar como sucesso
+          setFiles(prev => prev.map(f =>
+            f.id === uploadFile.id ? { ...f, status: 'success' as const, progress: 100 } : f
+          ))
+
+        } catch (err) {
+          // Marcar como erro
+          const errorMsg = err instanceof ApiError ? err.detail : 'Erro no upload'
+          setFiles(prev => prev.map(f =>
+            f.id === uploadFile.id ? { ...f, status: 'error' as const, errorMessage: errorMsg } : f
+          ))
+        }
+      }
+
+      // 3. Chamar callback se fornecido
+      if (onUploadComplete) {
+        onUploadComplete(project.id)
+      }
+
+      // Se também tiver o callback legado
+      if (onFilesUploaded) {
+        onFilesUploaded(files.map(f => f.file), sourceType, projectName)
+      }
+
+    } catch (err) {
+      const errorMsg = err instanceof ApiError ? err.detail : 'Erro ao criar projeto'
+      setUploadError(errorMsg)
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Upload simulado (para quando não estiver autenticado - modo demo)
+  const handleDemoUpload = () => {
+    const filesToUpload = files.filter(f => f.status !== 'success')
+
+    filesToUpload.forEach((file) => {
+      let progress = 0
+      const interval = setInterval(() => {
+        progress += Math.random() * 30
+        if (progress >= 100) {
+          progress = 100
+          clearInterval(interval)
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === file.id ? { ...f, progress: 100, status: 'success' as const } : f
+            )
+          )
+        } else {
+          setFiles((prev) =>
+            prev.map((f) => (f.id === file.id ? { ...f, progress, status: 'uploading' as const } : f))
+          )
+        }
+      }, 200)
+    })
+
+    // Callback para modo demo
+    if (onFilesUploaded && projectName.trim()) {
+      setTimeout(() => {
+        onFilesUploaded(files.map(f => f.file), sourceType, projectName.trim())
+      }, 2000)
+    }
+  }
+
+  const allUploaded = files.length > 0 && files.every(f => f.status === 'success')
+  const hasErrors = files.some(f => f.status === 'error')
+  const canUpload = files.length > 0 && projectName.trim() && !isProcessing
+
   return (
     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
       <h2 className="text-xl font-bold text-white mb-6">Upload de Imagens</h2>
+
+      {/* Aviso de autenticação */}
+      {!isAuthenticated && (
+        <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center gap-2">
+          <AlertCircle size={18} className="text-yellow-500" />
+          <span className="text-yellow-400 text-sm">
+            Modo demonstração - faça login para salvar dados no servidor
+          </span>
+        </div>
+      )}
 
       {/* Seleção de fonte */}
       <div className="mb-6">
@@ -149,6 +267,27 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
         </div>
       </div>
 
+      {/* Nome do projeto */}
+      {sourceType && (
+        <div className="mb-6">
+          <label htmlFor="project-name" className="block text-gray-400 mb-2">
+            Nome do Projeto <span className="text-red-400">*</span>
+          </label>
+          <input
+            type="text"
+            id="project-name"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            placeholder="Ex: Fazenda São João - Talhão 5"
+            disabled={isProcessing}
+            className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] focus:ring-1 focus:ring-[#6AAF3D] transition-colors disabled:opacity-50"
+          />
+          <p className="text-gray-600 text-xs mt-2">
+            Escolha um nome descritivo para identificar facilmente o projeto
+          </p>
+        </div>
+      )}
+
       {/* Área de drop */}
       {sourceType && (
         <div
@@ -156,7 +295,8 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={`drop-zone rounded-xl p-8 text-center transition-all duration-300
-            ${isDragging ? 'active' : ''}`}
+            ${isDragging ? 'active' : ''}
+            ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}
         >
           <input
             type="file"
@@ -164,9 +304,10 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
             multiple
             accept="image/*,video/*,.tif,.tiff,.geotiff"
             onChange={handleFileSelect}
+            disabled={isProcessing}
             className="hidden"
           />
-          <label htmlFor="file-upload" className="cursor-pointer">
+          <label htmlFor="file-upload" className={`${isProcessing ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
             <div className="flex flex-col items-center gap-4">
               <div className={`p-4 rounded-full ${isDragging ? 'bg-[#6AAF3D]/20' : 'bg-gray-800'}`}>
                 <Upload size={40} className={isDragging ? 'text-[#6AAF3D]' : 'text-gray-500'} />
@@ -195,7 +336,9 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
           {files.map((file) => (
             <div
               key={file.id}
-              className="flex items-center gap-4 p-3 bg-gray-800/50 rounded-lg"
+              className={`flex items-center gap-4 p-3 rounded-lg ${
+                file.status === 'error' ? 'bg-red-900/20 border border-red-500/30' : 'bg-gray-800/50'
+              }`}
             >
               {/* Preview ou ícone */}
               <div className="w-12 h-12 rounded-lg bg-gray-700 flex items-center justify-center overflow-hidden">
@@ -220,6 +363,9 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
                     />
                   </div>
                 )}
+                {file.status === 'error' && file.errorMessage && (
+                  <p className="text-red-400 text-xs mt-1">{file.errorMessage}</p>
+                )}
               </div>
 
               {/* Status */}
@@ -233,9 +379,13 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
                 {file.status === 'error' && (
                   <AlertCircle size={20} className="text-red-500" />
                 )}
+                {file.status === 'pending' && (
+                  <span className="text-gray-500 text-xs">Aguardando</span>
+                )}
                 <button
                   onClick={() => removeFile(file.id)}
-                  className="p-1 hover:bg-gray-700 rounded transition-colors"
+                  disabled={isProcessing}
+                  className="p-1 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
                 >
                   <X size={18} className="text-gray-500 hover:text-white" />
                 </button>
@@ -245,13 +395,69 @@ export default function UploadZone({ onFilesUploaded }: UploadZoneProps) {
         </div>
       )}
 
+      {/* Erro global */}
+      {uploadError && (
+        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2">
+          <AlertCircle size={18} className="text-red-500" />
+          <span className="text-red-400 text-sm">{uploadError}</span>
+        </div>
+      )}
+
       {/* Botão de processar */}
-      {files.length > 0 && files.every((f) => f.status === 'success') && (
-        <button className="mt-6 w-full py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2">
-          <span>Processar e Gerar Relatório</span>
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-          </svg>
+      {files.length > 0 && !allUploaded && (
+        <div className="mt-6">
+          {!projectName.trim() && (
+            <p className="text-yellow-400 text-sm mb-3 flex items-center gap-2">
+              <AlertCircle size={16} />
+              Digite um nome para o projeto antes de processar
+            </p>
+          )}
+          <button
+            onClick={isAuthenticated ? handleUpload : handleDemoUpload}
+            disabled={!canUpload}
+            className={`w-full py-3 font-semibold rounded-xl transition-colors flex items-center justify-center gap-2
+              ${canUpload
+                ? 'bg-[#6AAF3D] hover:bg-[#5a9a34] text-white cursor-pointer'
+                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              }`}
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 size={20} className="animate-spin" />
+                <span>Enviando arquivos...</span>
+              </>
+            ) : (
+              <>
+                <span>Enviar e Processar</span>
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Sucesso */}
+      {allUploaded && (
+        <div className="mt-6 p-4 bg-[#6AAF3D]/10 border border-[#6AAF3D]/30 rounded-lg">
+          <div className="flex items-center gap-2 text-[#6AAF3D]">
+            <CheckCircle size={20} />
+            <span className="font-medium">Upload concluído com sucesso!</span>
+          </div>
+          <p className="text-gray-400 text-sm mt-2">
+            {files.length} arquivo(s) enviado(s). O processamento está sendo realizado.
+          </p>
+        </div>
+      )}
+
+      {/* Retry para erros */}
+      {hasErrors && !isProcessing && (
+        <button
+          onClick={isAuthenticated ? handleUpload : handleDemoUpload}
+          className="mt-3 w-full py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
+        >
+          Tentar novamente arquivos com erro
         </button>
       )}
     </div>

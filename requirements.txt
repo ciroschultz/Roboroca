@@ -50,6 +50,7 @@ fiona>=1.9.5
 numpy>=1.26.3
 opencv-python-headless>=4.9.0.80
 pillow>=10.2.0
+exifread>=3.0.0
 
 # -----------------
 # Machine Learning

@@ -1,167 +1,1092 @@
 """
 Analysis Routes
-Endpoints para análise de imagens (NDVI, classificação, contagem de plantas, etc).
+Endpoints para análise de imagens (vegetação, cobertura, saúde de plantas, etc).
 """
 
-from fastapi import APIRouter, HTTPException, status
+import os
+import time
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+
+from backend.core.database import get_db
+from backend.core.config import settings
+from backend.models.user import User
+from backend.models.project import Project
+from backend.models.image import Image
+from backend.models.analysis import Analysis
+from backend.api.schemas.analysis import (
+    AnalysisResponse,
+    AnalysisListResponse,
+)
+from backend.api.dependencies.auth import get_current_user
+
+# Serviços de processamento de imagens
+from backend.services.image_processing import (
+    run_basic_analysis,
+    calculate_vegetation_coverage,
+    estimate_vegetation_health,
+    analyze_image_colors,
+    calculate_color_histogram,
+    generate_vegetation_heatmap,
+    detect_vegetation_mask,
+    image_to_numpy,
+    numpy_to_image,
+)
+from PIL import Image as PILImage
+import numpy as np
+
+# Serviços de Machine Learning
+try:
+    from backend.services.ml import (
+        get_detection_summary,
+        segment_by_color,
+        classify_vegetation_type,
+        extract_all_features,
+    )
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
 
 router = APIRouter(prefix="/analysis")
 
 
+async def get_user_image(
+    image_id: int,
+    current_user: User,
+    db: AsyncSession
+) -> Image:
+    """Helper para buscar imagem do usuário."""
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada"
+        )
+
+    if not os.path.exists(image.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Arquivo de imagem não encontrado"
+        )
+
+    return image
+
+
+def is_image_file(filename: str) -> bool:
+    """Verificar se é arquivo de imagem (não vídeo)."""
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in {'.tif', '.tiff', '.jpg', '.jpeg', '.png', '.geotiff'}
+
+
+@router.get("/", response_model=AnalysisListResponse)
+async def list_analyses(
+    image_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    analysis_type: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Listar análises do usuário, com filtros opcionais."""
+    # Base filter - análises de imagens de projetos do usuário
+    base_filter = Analysis.image.has(Image.project.has(Project.owner_id == current_user.id))
+
+    if image_id:
+        base_filter = base_filter & (Analysis.image_id == image_id)
+
+    if project_id:
+        base_filter = base_filter & Analysis.image.has(Image.project_id == project_id)
+
+    if analysis_type:
+        base_filter = base_filter & (Analysis.analysis_type == analysis_type)
+
+    # Contar total
+    count_query = select(func.count(Analysis.id)).where(base_filter)
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Buscar análises
+    query = (
+        select(Analysis)
+        .where(base_filter)
+        .offset(skip)
+        .limit(limit)
+        .order_by(Analysis.created_at.desc())
+    )
+    result = await db.execute(query)
+    analyses = result.scalars().all()
+
+    return AnalysisListResponse(analyses=analyses, total=total)
+
+
+@router.post("/vegetation/{image_id}", response_model=AnalysisResponse)
+async def analyze_vegetation(
+    image_id: int,
+    threshold: float = Query(0.3, ge=0, le=1, description="Limiar para detecção de vegetação"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Análise completa de vegetação usando Excess Green Index (ExG).
+
+    Funciona com imagens RGB comuns (não precisa de NIR).
+
+    Retorna:
+    - Percentual de cobertura vegetal
+    - Índice de saúde da vegetação
+    - Estatísticas de cor
+    - Histograma de cores
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise de vegetação disponível apenas para imagens (não vídeos)"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="vegetation",
+        status="processing",
+        image_id=image_id,
+        config={"threshold": threshold}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Executar análise completa
+        results = run_basic_analysis(image.file_path)
+
+        # Atualizar com threshold customizado se diferente do padrão
+        if threshold != 0.3:
+            with PILImage.open(image.file_path) as img:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                image_array = np.array(img)
+            results['coverage'] = calculate_vegetation_coverage(image_array, threshold)
+
+        processing_time = time.time() - start_time
+
+        # Atualizar análise com resultados
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise: {str(e)}"
+        )
+
+
+@router.post("/plant-health/{image_id}", response_model=AnalysisResponse)
+async def analyze_plant_health(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Analisar saúde das plantas usando índices de cor RGB.
+
+    NOTA: Esta é uma análise simplificada para imagens RGB.
+    Para análise precisa, seria necessário imagens multiespectrais (NIR).
+
+    Retorna:
+    - Índice de saúde (0-100)
+    - Percentual de vegetação saudável
+    - Percentual de vegetação com estresse
+    - Percentual de vegetação crítica
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise de saúde disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="plant_health",
+        status="processing",
+        image_id=image_id,
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Carregar imagem
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            image_array = np.array(img)
+
+        # Executar análise de saúde
+        health_results = estimate_vegetation_health(image_array)
+
+        processing_time = time.time() - start_time
+
+        # Formatar resultados
+        results = {
+            "health_index": health_results['health_index'],
+            "healthy_percentage": health_results['healthy_percentage'],
+            "moderate_percentage": health_results['moderate_percentage'],
+            "stressed_percentage": health_results['stressed_percentage'],
+            "non_vegetation_percentage": health_results['non_vegetation_percentage'],
+            "vegetation_total_percentage": health_results['vegetation_total_percentage'],
+            "mean_exg": health_results['mean_exg'],
+            "mean_gli": health_results['mean_gli'],
+            "classification": {
+                "healthy": {"percentage": health_results['healthy_percentage']},
+                "moderate": {"percentage": health_results['moderate_percentage']},
+                "stressed": {"percentage": health_results['stressed_percentage']},
+                "non_vegetation": {"percentage": health_results['non_vegetation_percentage']},
+            }
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise: {str(e)}"
+        )
+
+
+@router.post("/colors/{image_id}", response_model=AnalysisResponse)
+async def analyze_colors(
+    image_id: int,
+    bins: int = Query(32, ge=8, le=256, description="Número de bins do histograma"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Analisar distribuição de cores da imagem.
+
+    Retorna:
+    - Estatísticas por canal (R, G, B)
+    - Histograma de cores
+    - Brilho médio
+    - Se é predominantemente verde
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise de cores disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="colors",
+        status="processing",
+        image_id=image_id,
+        config={"bins": bins}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Carregar imagem
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            image_array = np.array(img)
+
+        # Executar análises
+        color_stats = analyze_image_colors(image_array)
+        histogram = calculate_color_histogram(image_array, bins)
+
+        processing_time = time.time() - start_time
+
+        results = {
+            "statistics": color_stats,
+            "histogram": histogram,
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise: {str(e)}"
+        )
+
+
+@router.post("/heatmap/{image_id}")
+async def generate_heatmap(
+    image_id: int,
+    colormap: str = Query("green", description="Tipo de colormap: green, jet, viridis"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Gerar mapa de calor de vegetação.
+
+    Cores:
+    - green: Verde = vegetação, marrom = solo
+    - jet: Gradiente vermelho-amarelo-verde
+    - viridis: Gradiente azul-verde-amarelo
+
+    Retorna a imagem do mapa de calor.
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Heatmap disponível apenas para imagens"
+        )
+
+    if colormap not in ['green', 'jet', 'viridis']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Colormap deve ser: green, jet ou viridis"
+        )
+
+    try:
+        # Carregar imagem
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            image_array = np.array(img)
+
+        # Gerar heatmap
+        heatmap = generate_vegetation_heatmap(image_array, colormap)
+
+        # Salvar heatmap
+        output_dir = os.path.dirname(image.file_path)
+        heatmap_filename = f"{os.path.splitext(image.filename)[0]}_heatmap_{colormap}.jpg"
+        heatmap_path = os.path.join(output_dir, heatmap_filename)
+
+        heatmap_img = PILImage.fromarray(heatmap)
+        heatmap_img.save(heatmap_path, 'JPEG', quality=90)
+
+        return FileResponse(heatmap_path, media_type="image/jpeg")
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao gerar heatmap: {str(e)}"
+        )
+
+
+@router.post("/mask/{image_id}")
+async def generate_vegetation_mask(
+    image_id: int,
+    threshold: float = Query(0.3, ge=0, le=1, description="Limiar para detecção"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Gerar máscara binária de vegetação.
+
+    Retorna imagem preto/branco onde branco = vegetação.
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Máscara disponível apenas para imagens"
+        )
+
+    try:
+        # Carregar imagem
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            image_array = np.array(img)
+
+        # Gerar máscara
+        mask = detect_vegetation_mask(image_array, threshold)
+
+        # Salvar máscara
+        output_dir = os.path.dirname(image.file_path)
+        mask_filename = f"{os.path.splitext(image.filename)[0]}_mask.png"
+        mask_path = os.path.join(output_dir, mask_filename)
+
+        mask_img = PILImage.fromarray(mask)
+        mask_img.save(mask_path, 'PNG')
+
+        return FileResponse(mask_path, media_type="image/png")
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao gerar máscara: {str(e)}"
+        )
+
+
+@router.get("/{analysis_id}", response_model=AnalysisResponse)
+async def get_analysis(
+    analysis_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Obter detalhes de uma análise."""
+    result = await db.execute(
+        select(Analysis)
+        .where(Analysis.id == analysis_id)
+        .where(Analysis.image.has(Image.project.has(Project.owner_id == current_user.id)))
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Análise não encontrada"
+        )
+
+    return analysis
+
+
+@router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_analysis(
+    analysis_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Excluir uma análise."""
+    result = await db.execute(
+        select(Analysis)
+        .where(Analysis.id == analysis_id)
+        .where(Analysis.image.has(Image.project.has(Project.owner_id == current_user.id)))
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Análise não encontrada"
+        )
+
+    # Remover arquivos gerados (se houver)
+    if analysis.output_files:
+        for file_path in analysis.output_files:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+
+    await db.delete(analysis)
+    await db.commit()
+
+
+@router.post("/report/{image_id}", response_model=AnalysisResponse)
+async def generate_full_report(
+    image_id: int,
+    threshold: float = Query(0.3, ge=0, le=1),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Gerar relatório completo de análise da imagem.
+
+    Executa todas as análises disponíveis:
+    - Cobertura de vegetação
+    - Saúde das plantas
+    - Análise de cores
+    - Histogramas
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Relatório disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="full_report",
+        status="processing",
+        image_id=image_id,
+        config={"threshold": threshold}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Executar análise completa
+        basic_results = run_basic_analysis(image.file_path)
+
+        # Carregar imagem para análises adicionais
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            image_array = np.array(img)
+
+        # Recalcular com threshold customizado se diferente
+        if threshold != 0.3:
+            basic_results['coverage'] = calculate_vegetation_coverage(image_array, threshold)
+
+        processing_time = time.time() - start_time
+
+        # Compilar resultados
+        results = {
+            "image_info": {
+                "filename": image.original_filename,
+                "file_size_mb": round(image.file_size / 1024 / 1024, 2) if image.file_size else None,
+                "dimensions": f"{basic_results['image_size']['width']}x{basic_results['image_size']['height']}",
+                "gps_coordinates": {
+                    "latitude": image.center_lat,
+                    "longitude": image.center_lon,
+                } if image.center_lat and image.center_lon else None,
+                "capture_date": image.capture_date.isoformat() if image.capture_date else None,
+            },
+            "vegetation_coverage": basic_results['coverage'],
+            "vegetation_health": basic_results['health'],
+            "color_analysis": basic_results['colors'],
+            "histogram": basic_results['histogram'],
+            "summary": {
+                "vegetation_percentage": basic_results['coverage']['vegetation_percentage'],
+                "health_index": basic_results['health']['health_index'],
+                "is_predominantly_green": basic_results['colors']['is_predominantly_green'],
+                "brightness": round(basic_results['colors']['brightness'], 1),
+            },
+            "recommendations": generate_recommendations(basic_results),
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao gerar relatório: {str(e)}"
+        )
+
+
+def generate_recommendations(results: dict) -> list:
+    """Gerar recomendações baseadas nos resultados da análise."""
+    recommendations = []
+
+    coverage = results.get('coverage', {})
+    health = results.get('health', {})
+
+    # Recomendações baseadas em cobertura
+    veg_pct = coverage.get('vegetation_percentage', 0)
+    if veg_pct < 30:
+        recommendations.append({
+            "type": "warning",
+            "category": "cobertura",
+            "message": "Baixa cobertura vegetal detectada. Considere verificar a área para possíveis problemas de plantio ou erosão."
+        })
+    elif veg_pct > 80:
+        recommendations.append({
+            "type": "info",
+            "category": "cobertura",
+            "message": "Excelente cobertura vegetal. A área apresenta boa densidade de vegetação."
+        })
+
+    # Recomendações baseadas em saúde
+    health_index = health.get('health_index', 0)
+    stressed_pct = health.get('stressed_percentage', 0)
+
+    if health_index < 50:
+        recommendations.append({
+            "type": "warning",
+            "category": "saúde",
+            "message": "Índice de saúde da vegetação baixo. Recomenda-se inspeção visual da área para identificar possíveis causas (pragas, doenças, deficiência nutricional)."
+        })
+    elif health_index > 75:
+        recommendations.append({
+            "type": "success",
+            "category": "saúde",
+            "message": "Vegetação apresenta bom índice de saúde."
+        })
+
+    if stressed_pct > 20:
+        recommendations.append({
+            "type": "alert",
+            "category": "estresse",
+            "message": f"Detectado {stressed_pct:.1f}% de vegetação com sinais de estresse. Verificar irrigação e condições do solo."
+        })
+
+    # Se não há recomendações, adicionar uma genérica positiva
+    if not recommendations:
+        recommendations.append({
+            "type": "info",
+            "category": "geral",
+            "message": "Análise concluída. Os indicadores estão dentro dos parâmetros normais."
+        })
+
+    return recommendations
+
+
+# Endpoints mantidos como placeholder para futuras implementações
+
 @router.post("/ndvi/{image_id}")
-async def calculate_ndvi(image_id: int):
+async def calculate_ndvi(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+):
     """
     Calcular NDVI (Normalized Difference Vegetation Index).
 
-    Requer imagem com bandas RED e NIR.
-    Retorna mapa de calor com valores de -1 a 1.
+    NOTA: Requer imagem com bandas RED e NIR (multiespectral).
+    Imagens RGB comuns não suportam NDVI.
+
+    Use o endpoint /vegetation para análise com imagens RGB.
     """
-    # TODO: Implementar cálculo de NDVI
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
+        detail="NDVI requer imagens multiespectrais (NIR). Use /analysis/vegetation para imagens RGB.",
     )
 
 
-@router.post("/classify/{image_id}")
-async def classify_land_use(image_id: int):
+@router.post("/classify/{image_id}", response_model=AnalysisResponse)
+async def classify_land_use(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Classificar uso do solo na imagem.
+    Classificar uso do solo na imagem usando análise de cores.
 
-    Classes detectadas:
-    - Floresta
-    - Pasto
-    - Plantação/Agricultura
-    - Água
+    Retorna percentuais de:
+    - Vegetação
     - Solo exposto
-    - Construções
+    - Água
+    - Construções/estradas
+    - Sombras
     """
-    # TODO: Implementar classificação com ML
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis. Instale as dependências necessárias.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Classificação disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="land_classification",
+        status="processing",
+        image_id=image_id,
     )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
 
+    start_time = time.time()
 
-@router.post("/area/{image_id}")
-async def calculate_areas(image_id: int):
-    """
-    Calcular área em hectares de cada classe de uso do solo.
+    try:
+        # Carregar imagem
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
 
-    Requer que a classificação tenha sido executada primeiro.
-    """
-    # TODO: Implementar cálculo de áreas
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
-    )
+            # Redimensionar para processamento mais rápido
+            max_size = 1500
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, PILImage.Resampling.LANCZOS)
+
+            image_array = np.array(img)
+
+        # Executar segmentação por cor
+        segmentation = segment_by_color(image_array)
+
+        # Classificar tipo de vegetação
+        veg_type = classify_vegetation_type(image.file_path)
+
+        processing_time = time.time() - start_time
+
+        results = {
+            "land_use_percentages": segmentation,
+            "vegetation_classification": veg_type,
+            "summary": {
+                "total_vegetation": segmentation.get('vegetacao', 0),
+                "total_non_vegetation": 100 - segmentation.get('vegetacao', 0),
+                "vegetation_type": veg_type.get('vegetation_type', 'unknown'),
+                "vegetation_density": veg_type.get('vegetation_density', 'unknown'),
+            }
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na classificação: {str(e)}"
+        )
 
 
 @router.post("/plant-count/{image_id}")
-async def count_plants(image_id: int):
+async def count_plants(image_id: int, current_user: User = Depends(get_current_user)):
     """
     Contar número de plantas na imagem.
 
-    Retorna:
-    - Total de plantas detectadas
-    - Plantas por hectare
-    - Mapa de detecções
+    NOTA: Funcionalidade em desenvolvimento.
+    Requer modelo de detecção de objetos treinado especificamente para imagens aéreas.
     """
-    # TODO: Implementar contagem de plantas
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
+        detail="Contagem de plantas requer modelo especializado para imagens aéreas. Em desenvolvimento.",
     )
 
 
-@router.post("/plant-health/{image_id}")
-async def analyze_plant_health(image_id: int):
+@router.post("/detect/{image_id}", response_model=AnalysisResponse)
+async def detect_objects(
+    image_id: int,
+    confidence: float = Query(0.25, ge=0.1, le=0.9, description="Limiar de confiança"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Analisar saúde das plantas.
+    Detectar objetos na imagem usando YOLOv8.
 
-    Retorna:
-    - Percentual de plantas saudáveis
-    - Percentual de plantas com estresse
-    - Percentual de plantas em estado crítico
-    - Mapa de saúde
+    Detecta objetos comuns como: pessoas, veículos, animais, etc.
+    NOTA: Modelo treinado para fotos de solo, pode ter baixa acurácia em imagens aéreas.
     """
-    # TODO: Implementar análise de saúde
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Detecção disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="object_detection",
+        status="processing",
+        image_id=image_id,
+        config={"confidence": confidence}
     )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Executar detecção
+        detection_results = get_detection_summary(image.file_path, confidence)
+
+        processing_time = time.time() - start_time
+
+        results = {
+            "detections": detection_results,
+            "note": "Modelo YOLO treinado para fotos de solo. Para imagens aéreas, considere usar modelo especializado.",
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na detecção: {str(e)}"
+        )
 
 
-@router.post("/height-estimation/{image_id}")
-async def estimate_height(image_id: int):
+@router.post("/features/{image_id}", response_model=AnalysisResponse)
+async def extract_features(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Estimar altura das plantas/vegetação.
-
-    Requer imagens com modelo digital de superfície (DSM).
-    """
-    # TODO: Implementar estimativa de altura
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
-    )
-
-
-@router.post("/soil-analysis/{image_id}")
-async def analyze_soil(image_id: int):
-    """
-    Analisar solo e gerar recomendações de correção.
-
-    Retorna:
-    - Áreas com deficiência
-    - Recomendações de correção
-    """
-    # TODO: Implementar análise de solo
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
-    )
-
-
-@router.get("/results/{analysis_id}")
-async def get_analysis_results(analysis_id: int):
-    """Obter resultados de uma análise."""
-    # TODO: Implementar
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
-    )
-
-
-@router.get("/history/{image_id}")
-async def get_analysis_history(image_id: int):
-    """Obter histórico de análises de uma imagem."""
-    # TODO: Implementar
-    return {
-        "image_id": image_id,
-        "analyses": [],
-        "message": "Endpoint em desenvolvimento",
-    }
-
-
-@router.post("/report/{image_id}")
-async def generate_report(image_id: int):
-    """
-    Gerar relatório completo da imagem.
+    Extrair todas as características visuais da imagem.
 
     Inclui:
-    - NDVI e outros índices de vegetação
-    - Classificação de uso do solo
-    - Áreas por categoria
-    - Contagem de plantas
-    - Análise de saúde
-    - Estimativa de altura
-    - Recomendações de correção de solo
-    - Estatísticas gerais
-
-    Formato: PDF ou JSON.
+    - Características de textura
+    - Características de cor
+    - Padrões detectados (linhas, círculos)
+    - Anomalias visuais
     """
-    # TODO: Implementar geração de relatório
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint em desenvolvimento",
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Extração de características disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="feature_extraction",
+        status="processing",
+        image_id=image_id,
     )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Extrair características
+        features = extract_all_features(image.file_path)
+
+        processing_time = time.time() - start_time
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = features
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na extração: {str(e)}"
+        )
+
+
+@router.post("/full/{image_id}", response_model=AnalysisResponse)
+async def full_ml_analysis(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Análise completa com Machine Learning.
+
+    Executa todas as análises disponíveis:
+    - Análise de vegetação (ExG, GLI)
+    - Classificação de uso do solo
+    - Classificação de vegetação
+    - Extração de características
+    - Detecção de padrões
+
+    NOTA: Pode demorar 30-60 segundos por imagem.
+    """
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise completa disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="full_ml_analysis",
+        status="processing",
+        image_id=image_id,
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Carregar imagem uma vez
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # Redimensionar para processamento
+            max_size = 1200
+            original_size = img.size
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img_resized = img.resize(new_size, PILImage.Resampling.LANCZOS)
+            else:
+                img_resized = img
+
+            image_array = np.array(img_resized)
+
+        # 1. Análise básica de vegetação
+        basic_results = run_basic_analysis(image.file_path)
+
+        # 2. Segmentação por cor
+        segmentation = segment_by_color(image_array)
+
+        # 3. Classificação de vegetação
+        veg_classification = classify_vegetation_type(image.file_path)
+
+        # 4. Extração de características (simplificada para performance)
+        from backend.services.ml.feature_extractor import (
+            extract_texture_features,
+            extract_color_features,
+        )
+        texture = extract_texture_features(image_array)
+        colors = extract_color_features(image_array)
+
+        processing_time = time.time() - start_time
+
+        # Compilar resultados
+        results = {
+            "image_info": {
+                "filename": image.original_filename,
+                "original_size": f"{original_size[0]}x{original_size[1]}",
+                "gps": {
+                    "latitude": image.center_lat,
+                    "longitude": image.center_lon,
+                } if image.center_lat and image.center_lon else None,
+            },
+            "vegetation_analysis": {
+                "coverage": basic_results.get('coverage', {}),
+                "health": basic_results.get('health', {}),
+            },
+            "land_use": segmentation,
+            "vegetation_type": veg_classification,
+            "visual_features": {
+                "texture": texture,
+                "colors": colors,
+            },
+            "summary": {
+                "vegetation_percentage": basic_results.get('coverage', {}).get('vegetation_percentage', 0),
+                "health_index": basic_results.get('health', {}).get('health_index', 0),
+                "dominant_land_use": max(segmentation, key=segmentation.get) if segmentation else 'unknown',
+                "vegetation_type": veg_classification.get('vegetation_type', 'unknown'),
+                "texture_type": texture.get('texture_type', 'unknown'),
+                "dominant_color": colors.get('dominant_color', 'unknown'),
+            },
+            "processing_time_seconds": round(processing_time, 2),
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise: {str(e)}"
+        )

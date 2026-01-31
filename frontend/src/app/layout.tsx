@@ -5,7 +5,8 @@ export const metadata: Metadata = {
   title: 'Roboroça - Automação Agrícola',
   description: 'Sistema Inteligente de Análise de Imagens Aéreas para Agricultura',
   icons: {
-    icon: '/favicon.ico',
+    icon: '/favicon.png',
+    apple: '/logo-icon.png',
   },
 }
 
