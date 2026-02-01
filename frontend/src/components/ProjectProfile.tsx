@@ -190,7 +190,8 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
             </div>
             <p className="text-sm text-gray-500 mt-2">Calculando índices de vegetação...</p>
           </div>
-        ) : activeTab === 'overview' && project.results ? (
+        ) : activeTab === 'overview' ? (
+          project.results ? (
           <>
             {/* Cards de estatísticas do projeto */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -333,6 +334,29 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
               </div>
             </div>
           </>
+          ) : (
+            /* Sem resultados ainda */
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="w-24 h-24 rounded-full bg-blue-900/20 flex items-center justify-center mb-6">
+                <BarChart3 size={48} className="text-blue-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-2">Análise pendente</h3>
+              <p className="text-gray-400 text-center max-w-md mb-6">
+                Este projeto ainda não possui resultados de análise. Aguarde o processamento das imagens ou inicie uma nova análise.
+              </p>
+              <div className="flex gap-3">
+                <button className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium">
+                  Iniciar Análise
+                </button>
+                <button
+                  onClick={() => setActiveTab('map')}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                >
+                  Ver no Mapa
+                </button>
+              </div>
+            </div>
+          )
         ) : activeTab === 'map' ? (
           <div className="h-[calc(100vh-250px)]">
             <MapView />

@@ -5,12 +5,15 @@ Endpoints para gerenciamento de projetos (fazendas/propriedades).
 
 from typing import Optional
 import asyncio
+import os
+import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from backend.core.database import get_db
+from backend.core.database import get_db, async_session_maker
 from backend.models.user import User
 from backend.models.project import Project
 from backend.models.image import Image
@@ -27,6 +30,119 @@ from backend.api.dependencies.auth import get_current_user
 from backend.services.image_processing import run_basic_analysis
 
 router = APIRouter(prefix="/projects")
+
+
+def is_image_file(filename: str) -> bool:
+    """Verificar se é arquivo de imagem (não vídeo)."""
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in {'.tif', '.tiff', '.jpg', '.jpeg', '.png', '.geotiff'}
+
+
+async def run_project_analysis(project_id: int, image_ids: list[int]):
+    """
+    Executar análise em background para todas as imagens de um projeto.
+
+    Esta função é executada de forma assíncrona após o upload.
+    """
+    async with async_session_maker() as db:
+        try:
+            for image_id in image_ids:
+                # Buscar imagem
+                result = await db.execute(
+                    select(Image).where(Image.id == image_id)
+                )
+                image = result.scalar_one_or_none()
+
+                if not image or not os.path.exists(image.file_path):
+                    continue
+
+                # Verificar se é imagem (não vídeo)
+                if not is_image_file(image.original_filename):
+                    continue
+
+                # Verificar se já existe análise completa para esta imagem
+                existing = await db.execute(
+                    select(Analysis).where(
+                        Analysis.image_id == image_id,
+                        Analysis.analysis_type == "full_report",
+                        Analysis.status == "completed"
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                # Criar registro de análise
+                analysis = Analysis(
+                    analysis_type="full_report",
+                    status="processing",
+                    image_id=image_id,
+                    config={"threshold": 0.3, "auto_triggered": True}
+                )
+                db.add(analysis)
+                await db.commit()
+                await db.refresh(analysis)
+
+                start_time = time.time()
+
+                try:
+                    # Executar análise
+                    results = run_basic_analysis(image.file_path)
+                    processing_time = time.time() - start_time
+
+                    # Compilar resultados
+                    analysis_results = {
+                        "image_info": {
+                            "filename": image.original_filename,
+                            "file_size_mb": round(image.file_size / 1024 / 1024, 2) if image.file_size else None,
+                            "dimensions": f"{results['image_size']['width']}x{results['image_size']['height']}",
+                            "gps_coordinates": {
+                                "latitude": image.center_lat,
+                                "longitude": image.center_lon,
+                            } if image.center_lat and image.center_lon else None,
+                            "capture_date": image.capture_date.isoformat() if image.capture_date else None,
+                        },
+                        "vegetation_coverage": results['coverage'],
+                        "vegetation_health": results['health'],
+                        "color_analysis": results['colors'],
+                        "histogram": results['histogram'],
+                        "summary": {
+                            "vegetation_percentage": results['coverage']['vegetation_percentage'],
+                            "health_index": results['health']['health_index'],
+                            "is_predominantly_green": results['colors']['is_predominantly_green'],
+                            "brightness": round(results['colors']['brightness'], 1),
+                        },
+                    }
+
+                    # Atualizar análise
+                    analysis.status = "completed"
+                    analysis.results = analysis_results
+                    analysis.processing_time_seconds = round(processing_time, 2)
+                    analysis.completed_at = datetime.now(timezone.utc)
+
+                    # Atualizar status da imagem
+                    image.status = "analyzed"
+
+                    await db.commit()
+
+                except Exception as e:
+                    # Marcar análise como erro
+                    analysis.status = "error"
+                    analysis.error_message = str(e)
+                    image.status = "error"
+                    await db.commit()
+
+            # Atualizar status do projeto
+            project_result = await db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            if project:
+                project.status = "completed"
+                await db.commit()
+
+        except Exception as e:
+            # Log error (em produção usaria logging)
+            print(f"Erro na análise do projeto {project_id}: {e}")
 
 
 @router.get("/", response_model=ProjectListResponse)
@@ -95,7 +211,22 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
 
-    return project
+    # Retornar resposta formatada com todos os campos requeridos
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "status": project.status or "pending",
+        "location": project.location,
+        "latitude": project.latitude,
+        "longitude": project.longitude,
+        "total_area_ha": project.total_area_ha,
+        "area_hectares": project.total_area_ha,
+        "image_count": 0,  # Novo projeto não tem imagens
+        "owner_id": project.owner_id,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+    }
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -170,7 +301,31 @@ async def update_project(
     await db.commit()
     await db.refresh(project)
 
-    return project
+    # Contar imagens do projeto
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.images))
+        .where(Project.id == project_id)
+    )
+    project = result.scalar_one()
+
+    # Retornar resposta formatada
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "status": project.status or "pending",
+        "location": project.location,
+        "latitude": project.latitude,
+        "longitude": project.longitude,
+        "total_area_ha": project.total_area_ha,
+        "area_hectares": project.total_area_ha,
+        "image_count": len(project.images) if project.images else 0,
+        "owner_id": project.owner_id,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+    }
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -237,8 +392,8 @@ async def analyze_project(
             detail="Projeto não possui imagens para analisar"
         )
 
-    # Verificar quais imagens já têm análise completa
-    analyses_count = 0
+    # Verificar quais imagens precisam de análise
+    images_to_analyze = []
     for image in images:
         # Verificar se já existe análise para esta imagem
         existing_analysis = await db.execute(
@@ -249,9 +404,18 @@ async def analyze_project(
             )
         )
         if not existing_analysis.scalar_one_or_none():
-            analyses_count += 1
-            # Marcar imagem como em processamento
-            image.status = "processing"
+            # Verificar se é imagem (não vídeo)
+            if is_image_file(image.original_filename):
+                images_to_analyze.append(image.id)
+                # Marcar imagem como em processamento
+                image.status = "processing"
+
+    if not images_to_analyze:
+        return {
+            "message": "Todas as imagens já foram analisadas",
+            "analyses_started": 0,
+            "project_id": project_id
+        }
 
     await db.commit()
 
@@ -259,9 +423,12 @@ async def analyze_project(
     project.status = "processing"
     await db.commit()
 
+    # Adicionar tarefa em background para executar análises
+    background_tasks.add_task(run_project_analysis, project_id, images_to_analyze)
+
     return {
-        "message": f"Análise iniciada para {analyses_count} imagem(ns)",
-        "analyses_started": analyses_count,
+        "message": f"Análise iniciada para {len(images_to_analyze)} imagem(ns)",
+        "analyses_started": len(images_to_analyze),
         "project_id": project_id
     }
 

@@ -112,7 +112,7 @@ export default function MapView() {
   // Get auth token from localStorage
   const getAuthToken = () => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('token')
+      return localStorage.getItem('roboroca_token')
     }
     return null
   }
@@ -214,6 +214,23 @@ export default function MapView() {
       setAnalysisSummary(null)
     }
   }, [selectedProject])
+
+  // Auto-refresh when analysis is pending (polling every 5 seconds)
+  useEffect(() => {
+    if (!selectedProject || !analysisSummary) return
+
+    const hasPendingAnalysis = analysisSummary.pending_images > 0 ||
+                               analysisSummary.status === 'processing'
+
+    if (!hasPendingAnalysis) return
+
+    const intervalId = setInterval(() => {
+      fetchAnalysisSummary(selectedProject.id)
+      fetchProjectImages(selectedProject.id)
+    }, 5000) // Poll every 5 seconds
+
+    return () => clearInterval(intervalId)
+  }, [selectedProject, analysisSummary])
 
   const toggleLayer = (id: string) => {
     setLayers(prev =>
@@ -618,10 +635,40 @@ export default function MapView() {
 
                 {/* Informações de análise do projeto */}
                 <div className="mt-6 pt-4 border-t border-gray-700/50">
-                  <h5 className="text-white text-sm font-medium mb-3">Análise do Projeto</h5>
+                  <h5 className="text-white text-sm font-medium mb-3 flex items-center gap-2">
+                    Análise do Projeto
+                    {analysisSummary && (analysisSummary.pending_images > 0 || analysisSummary.status === 'processing') && (
+                      <span className="flex items-center gap-1 text-xs text-yellow-400 bg-yellow-500/10 px-2 py-0.5 rounded-full">
+                        <Loader2 size={12} className="animate-spin" />
+                        Processando...
+                      </span>
+                    )}
+                  </h5>
 
                   {analysisSummary ? (
                     <div className="space-y-3">
+                      {/* Barra de progresso quando há análises pendentes */}
+                      {analysisSummary.pending_images > 0 && (
+                        <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-yellow-400 text-xs font-medium">Análise em andamento</span>
+                            <span className="text-yellow-300 text-xs">
+                              {analysisSummary.analyzed_images}/{analysisSummary.total_images}
+                            </span>
+                          </div>
+                          <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-yellow-500 transition-all duration-500"
+                              style={{
+                                width: `${analysisSummary.total_images > 0
+                                  ? (analysisSummary.analyzed_images / analysisSummary.total_images) * 100
+                                  : 0}%`
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
                         <Leaf className="text-[#6AAF3D]" size={18} />
                         <div>
