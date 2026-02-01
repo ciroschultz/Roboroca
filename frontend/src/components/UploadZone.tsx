@@ -7,6 +7,7 @@ import {
   uploadImage,
   uploadMultipleImages,
   loadAuthToken,
+  analyzeProject,
   ApiError,
 } from '@/lib/api'
 
@@ -37,6 +38,8 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
   const [isProcessing, setIsProcessing] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [uploadSuccess, setUploadSuccess] = useState(false)
+  const [createdProjectId, setCreatedProjectId] = useState<number | null>(null)
 
   // Verificar autenticação ao montar
   useEffect(() => {
@@ -151,15 +154,29 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
         }
       }
 
-      // 3. Chamar callback se fornecido
-      if (onUploadComplete) {
-        onUploadComplete(project.id)
+      // 3. Disparar análise automática
+      try {
+        await analyzeProject(project.id)
+      } catch (analysisError) {
+        // Continuar mesmo se a análise falhar - pode ser executada depois
+        console.warn('Análise automática não iniciada:', analysisError)
       }
 
-      // Se também tiver o callback legado
-      if (onFilesUploaded) {
-        onFilesUploaded(files.map(f => f.file), sourceType, projectName)
-      }
+      // Marcar sucesso
+      setUploadSuccess(true)
+      setCreatedProjectId(project.id)
+
+      // 4. Chamar callback se fornecido (após pequeno delay para mostrar sucesso)
+      setTimeout(() => {
+        if (onUploadComplete) {
+          onUploadComplete(project.id)
+        }
+
+        // Se também tiver o callback legado
+        if (onFilesUploaded) {
+          onFilesUploaded(files.map(f => f.file), sourceType, projectName)
+        }
+      }, 2000)
 
     } catch (err) {
       const errorMsg = err instanceof ApiError ? err.detail : 'Erro ao criar projeto'
@@ -446,8 +463,23 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
             <span className="font-medium">Upload concluído com sucesso!</span>
           </div>
           <p className="text-gray-400 text-sm mt-2">
-            {files.length} arquivo(s) enviado(s). O processamento está sendo realizado.
+            {files.length} arquivo(s) enviado(s).
+            {uploadSuccess && isAuthenticated ? (
+              <span className="block mt-1">
+                A análise está sendo processada. Você será redirecionado para seus projetos...
+              </span>
+            ) : (
+              <span className="block mt-1">
+                O processamento está sendo realizado.
+              </span>
+            )}
           </p>
+          {uploadSuccess && (
+            <div className="mt-3 flex items-center gap-2 text-[#6AAF3D]">
+              <Loader2 size={16} className="animate-spin" />
+              <span className="text-sm">Preparando visualização...</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -458,6 +490,21 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
           className="mt-3 w-full py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
         >
           Tentar novamente arquivos com erro
+        </button>
+      )}
+
+      {/* Botão para novo upload após sucesso */}
+      {allUploaded && !uploadSuccess && (
+        <button
+          onClick={() => {
+            setFiles([])
+            setProjectName('')
+            setSourceType(null)
+            setUploadError(null)
+          }}
+          className="mt-3 w-full py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
+        >
+          Fazer novo upload
         </button>
       )}
     </div>

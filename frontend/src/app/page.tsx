@@ -3,11 +3,16 @@
 import { useState, useEffect } from 'react'
 import Sidebar from '@/components/Sidebar'
 import Header from '@/components/Header'
+import AuthScreen from '@/components/AuthScreen'
 import {
   getProjects,
   getImages,
   loadAuthToken,
+  getCurrentUser,
+  logout as apiLogout,
+  getProjectAnalysisSummary,
   Project as ApiProject,
+  User,
 } from '@/lib/api'
 import StatCard from '@/components/StatCard'
 import {
@@ -23,6 +28,7 @@ import MapView from '@/components/MapView'
 import EmptyState from '@/components/EmptyState'
 import ProjectsList from '@/components/ProjectsList'
 import ProjectProfile from '@/components/ProjectProfile'
+import SettingsPage from '@/components/SettingsPage'
 import {
   Leaf,
   Trees,
@@ -35,6 +41,8 @@ import {
   AlertTriangle,
   Clock,
   ArrowRight,
+  Menu,
+  X,
 } from 'lucide-react'
 
 // Tipo de projeto
@@ -58,203 +66,57 @@ interface Project {
   }
 }
 
-// Dados fake para demonstração do sistema
-const initialProjects: Project[] = [
-  {
-    id: '1',
-    name: 'Fazenda São João - Talhão Norte',
-    createdAt: '28/01/2026',
-    status: 'completed',
-    sourceType: 'drone',
-    imageCount: 45,
-    area: 450,
-    results: {
-      ndviMean: 0.72,
-      ndwiMean: 0.45,
-      plantCount: 125000,
-      healthyPercentage: 72,
-      stressedPercentage: 20,
-      criticalPercentage: 8,
-      landUse: [
-        { name: 'Agricultura', value: 320, color: '#6AAF3D' },
-        { name: 'Floresta', value: 80, color: '#065F46' },
-        { name: 'Pastagem', value: 35, color: '#F59E0B' },
-        { name: 'Água', value: 10, color: '#3B82F6' },
-        { name: 'Solo Exposto', value: 5, color: '#92400E' },
-      ],
-      heightDistribution: [
-        { altura: '0-1m', quantidade: 12000 },
-        { altura: '1-2m', quantidade: 35000 },
-        { altura: '2-3m', quantidade: 52000 },
-        { altura: '3-4m', quantidade: 21000 },
-        { altura: '>4m', quantidade: 5000 },
-      ],
-    },
-  },
-  {
-    id: '2',
-    name: 'Sítio Esperança - Área de Milho',
-    createdAt: '27/01/2026',
-    status: 'processing',
-    sourceType: 'satellite',
-    imageCount: 12,
-    area: 120,
-  },
-  {
-    id: '3',
-    name: 'Propriedade Rural XYZ',
-    createdAt: '25/01/2026',
-    status: 'completed',
-    sourceType: 'drone',
-    imageCount: 32,
-    area: 280,
-    results: {
-      ndviMean: 0.65,
-      ndwiMean: 0.38,
-      plantCount: 78000,
-      healthyPercentage: 68,
-      stressedPercentage: 24,
-      criticalPercentage: 8,
-      landUse: [
-        { name: 'Agricultura', value: 200, color: '#6AAF3D' },
-        { name: 'Floresta', value: 50, color: '#065F46' },
-        { name: 'Pastagem', value: 20, color: '#F59E0B' },
-        { name: 'Água', value: 5, color: '#3B82F6' },
-        { name: 'Solo Exposto', value: 5, color: '#92400E' },
-      ],
-      heightDistribution: [
-        { altura: '0-1m', quantidade: 8000 },
-        { altura: '1-2m', quantidade: 22000 },
-        { altura: '2-3m', quantidade: 30000 },
-        { altura: '3-4m', quantidade: 14000 },
-        { altura: '>4m', quantidade: 4000 },
-      ],
-    },
-  },
-  {
-    id: '4',
-    name: 'Fazenda Boa Vista - Soja',
-    createdAt: '22/01/2026',
-    status: 'completed',
-    sourceType: 'satellite',
-    imageCount: 8,
-    area: 850,
-    results: {
-      ndviMean: 0.78,
-      ndwiMean: 0.52,
-      plantCount: 340000,
-      healthyPercentage: 85,
-      stressedPercentage: 12,
-      criticalPercentage: 3,
-      landUse: [
-        { name: 'Agricultura', value: 720, color: '#6AAF3D' },
-        { name: 'Floresta', value: 60, color: '#065F46' },
-        { name: 'Pastagem', value: 40, color: '#F59E0B' },
-        { name: 'Água', value: 20, color: '#3B82F6' },
-        { name: 'Solo Exposto', value: 10, color: '#92400E' },
-      ],
-      heightDistribution: [
-        { altura: '0-1m', quantidade: 85000 },
-        { altura: '1-2m', quantidade: 170000 },
-        { altura: '2-3m', quantidade: 68000 },
-        { altura: '3-4m', quantidade: 12000 },
-        { altura: '>4m', quantidade: 5000 },
-      ],
-    },
-  },
-  {
-    id: '5',
-    name: 'Chácara do Vale - Hortaliças',
-    createdAt: '20/01/2026',
-    status: 'completed',
-    sourceType: 'drone',
-    imageCount: 28,
-    area: 15,
-    results: {
-      ndviMean: 0.58,
-      ndwiMean: 0.62,
-      plantCount: 8500,
-      healthyPercentage: 45,
-      stressedPercentage: 35,
-      criticalPercentage: 20,
-      landUse: [
-        { name: 'Agricultura', value: 12, color: '#6AAF3D' },
-        { name: 'Floresta', value: 1, color: '#065F46' },
-        { name: 'Pastagem', value: 1, color: '#F59E0B' },
-        { name: 'Água', value: 0.5, color: '#3B82F6' },
-        { name: 'Solo Exposto', value: 0.5, color: '#92400E' },
-      ],
-      heightDistribution: [
-        { altura: '0-1m', quantidade: 6800 },
-        { altura: '1-2m', quantidade: 1200 },
-        { altura: '2-3m', quantidade: 400 },
-        { altura: '3-4m', quantidade: 80 },
-        { altura: '>4m', quantidade: 20 },
-      ],
-    },
-  },
-  {
-    id: '6',
-    name: 'Fazenda Santa Rita - Café',
-    createdAt: '18/01/2026',
-    status: 'completed',
-    sourceType: 'drone',
-    imageCount: 62,
-    area: 180,
-    results: {
-      ndviMean: 0.69,
-      ndwiMean: 0.41,
-      plantCount: 95000,
-      healthyPercentage: 78,
-      stressedPercentage: 18,
-      criticalPercentage: 4,
-      landUse: [
-        { name: 'Agricultura', value: 150, color: '#6AAF3D' },
-        { name: 'Floresta', value: 15, color: '#065F46' },
-        { name: 'Pastagem', value: 8, color: '#F59E0B' },
-        { name: 'Água', value: 4, color: '#3B82F6' },
-        { name: 'Solo Exposto', value: 3, color: '#92400E' },
-      ],
-      heightDistribution: [
-        { altura: '0-1m', quantidade: 9500 },
-        { altura: '1-2m', quantidade: 47500 },
-        { altura: '2-3m', quantidade: 28500 },
-        { altura: '3-4m', quantidade: 7600 },
-        { altura: '>4m', quantidade: 1900 },
-      ],
-    },
-  },
-  {
-    id: '7',
-    name: 'Sítio Recanto - Fruticultura',
-    createdAt: '15/01/2026',
-    status: 'error',
-    sourceType: 'drone',
-    imageCount: 15,
-    area: 45,
-  },
-]
+// Array vazio - projetos serão carregados do backend ou criados via upload
+const initialProjects: Project[] = []
 
 export default function Home() {
   const [activeItem, setActiveItem] = useState('dashboard')
-  const [activeView, setActiveView] = useState<'dashboard' | 'upload' | 'map' | 'reports' | 'projects' | 'project-detail'>('dashboard')
+  const [activeView, setActiveView] = useState<'dashboard' | 'upload' | 'map' | 'reports' | 'projects' | 'project-detail' | 'settings' | 'help'>('dashboard')
   const [projects, setProjects] = useState<Project[]>(initialProjects)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
-  // Carregar projetos do backend (se autenticado)
+  // Carregar usuário e projetos do backend (se autenticado)
   useEffect(() => {
-    const token = loadAuthToken()
-    setIsAuthenticated(!!token)
-
-    if (token) {
-      loadProjectsFromApi()
-    } else {
+    const checkAuth = async () => {
+      const token = loadAuthToken()
+      if (token) {
+        try {
+          const user = await getCurrentUser()
+          setCurrentUser(user)
+          setIsAuthenticated(true)
+          await loadProjectsFromApi()
+        } catch (error) {
+          // Token inválido ou expirado
+          apiLogout()
+          setIsAuthenticated(false)
+        }
+      } else {
+        setIsAuthenticated(false)
+      }
       setIsLoading(false)
     }
+    checkAuth()
   }, [])
+
+  // Handler para login/cadastro bem-sucedido
+  const handleAuthSuccess = (user: User) => {
+    setCurrentUser(user)
+    setIsAuthenticated(true)
+    loadProjectsFromApi()
+  }
+
+  // Handler para logout
+  const handleLogout = () => {
+    apiLogout()
+    setCurrentUser(null)
+    setIsAuthenticated(false)
+    setProjects(initialProjects)
+  }
 
   const loadProjectsFromApi = async () => {
     try {
@@ -262,50 +124,93 @@ export default function Home() {
       const response = await getProjects(0, 100)
 
       // Converter projetos da API para o formato local
-      const apiProjects: Project[] = response.projects.map((p: ApiProject) => ({
-        id: String(p.id),
-        name: p.name,
-        createdAt: new Date(p.created_at).toLocaleDateString('pt-BR'),
-        status: p.status === 'completed' ? 'completed' : p.status === 'error' ? 'error' : 'processing',
-        sourceType: 'drone' as const,
-        imageCount: p.image_count || 0,
-        area: p.area_hectares || 0,
-        // Resultados serão carregados quando clicar no projeto
-        results: p.status === 'completed' ? {
-          ndviMean: 0.70,
-          ndwiMean: 0.42,
-          plantCount: 0,
-          healthyPercentage: 75,
-          stressedPercentage: 18,
-          criticalPercentage: 7,
-          landUse: [
-            { name: 'Agricultura', value: Math.floor((p.area_hectares || 100) * 0.7), color: '#6AAF3D' },
-            { name: 'Floresta', value: Math.floor((p.area_hectares || 100) * 0.15), color: '#065F46' },
-            { name: 'Pastagem', value: Math.floor((p.area_hectares || 100) * 0.08), color: '#F59E0B' },
-            { name: 'Água', value: Math.floor((p.area_hectares || 100) * 0.04), color: '#3B82F6' },
-            { name: 'Solo Exposto', value: Math.floor((p.area_hectares || 100) * 0.03), color: '#92400E' },
-          ],
-          heightDistribution: [
-            { altura: '0-1m', quantidade: 10000 },
-            { altura: '1-2m', quantidade: 25000 },
-            { altura: '2-3m', quantidade: 35000 },
-            { altura: '3-4m', quantidade: 15000 },
-            { altura: '>4m', quantidade: 5000 },
-          ],
-        } : undefined,
-      }))
+      const apiProjects: Project[] = await Promise.all(
+        response.projects.map(async (p: ApiProject) => {
+          // Tentar carregar resumo de análise para projetos completos
+          let results: Project['results'] = undefined
 
-      // Combinar com projetos fake se não houver projetos reais
-      if (apiProjects.length > 0) {
-        setProjects(apiProjects)
-      }
+          if (p.status === 'completed') {
+            try {
+              const summary = await getProjectAnalysisSummary(p.id)
+              if (summary.analyzed_images > 0) {
+                // Converter resumo para o formato esperado
+                const healthyPct = summary.health_index_avg || 0
+                const stressedPct = Math.max(0, 100 - healthyPct - 10)
+                const criticalPct = Math.min(10, 100 - healthyPct - stressedPct)
+
+                results = {
+                  ndviMean: summary.vegetation_coverage_avg / 100 || 0,
+                  ndwiMean: 0.35, // Placeholder - será calculado pelo backend futuramente
+                  plantCount: summary.analyzed_images * 5000, // Estimativa
+                  healthyPercentage: Math.round(healthyPct),
+                  stressedPercentage: Math.round(stressedPct),
+                  criticalPercentage: Math.round(criticalPct),
+                  landUse: Object.entries(summary.land_use_summary || {}).map(([name, value]) => ({
+                    name,
+                    value: Math.round(value as number),
+                    color: getLandUseColor(name)
+                  })),
+                  heightDistribution: [], // Placeholder
+                }
+              }
+            } catch {
+              // Ignorar erro ao carregar resumo
+            }
+          }
+
+          return {
+            id: String(p.id),
+            name: p.name,
+            createdAt: new Date(p.created_at).toLocaleDateString('pt-BR'),
+            status: p.status === 'completed' ? 'completed' : p.status === 'error' ? 'error' : 'processing',
+            sourceType: (p as any).source_type || 'drone',
+            imageCount: p.image_count || 0,
+            area: p.area_hectares || 0,
+            results,
+          }
+        })
+      )
+
+      setProjects(apiProjects)
     } catch (error) {
       console.error('Erro ao carregar projetos:', error)
-      // Manter projetos fake em caso de erro
+      // Em caso de erro, mantém lista vazia
+      setProjects([])
     } finally {
       setIsLoading(false)
     }
   }
+
+  // Função auxiliar para cores de uso do solo
+  const getLandUseColor = (name: string): string => {
+    const colors: Record<string, string> = {
+      'vegetacao': '#6AAF3D',
+      'Agricultura': '#6AAF3D',
+      'solo_exposto': '#92400E',
+      'Solo Exposto': '#92400E',
+      'agua': '#3B82F6',
+      'Água': '#3B82F6',
+      'construcao': '#6B7280',
+      'Construção': '#6B7280',
+      'sombra': '#1F2937',
+      'Sombra': '#1F2937',
+      'Floresta': '#065F46',
+      'Pastagem': '#F59E0B',
+    }
+    return colors[name] || '#6AAF3D'
+  }
+
+  // Polling para verificar status de projetos em processamento
+  useEffect(() => {
+    const processingProjects = projects.filter(p => p.status === 'processing')
+    if (processingProjects.length === 0 || !isAuthenticated) return
+
+    const interval = setInterval(async () => {
+      await loadProjectsFromApi()
+    }, 10000) // Verificar a cada 10 segundos
+
+    return () => clearInterval(interval)
+  }, [projects, isAuthenticated])
 
   // Calcula estatísticas agregadas de todos os projetos
   const completedProjects = projects.filter(p => p.status === 'completed' && p.results)
@@ -358,6 +263,8 @@ export default function Home() {
     else if (id === 'mapa') setActiveView('map')
     else if (id === 'relatorios') setActiveView('reports')
     else if (id === 'projetos') setActiveView('projects')
+    else if (id === 'configuracoes') setActiveView('settings')
+    else if (id === 'ajuda') setActiveView('help')
   }
 
   const handleUploadClick = () => {
@@ -370,58 +277,51 @@ export default function Home() {
     setActiveView('project-detail')
   }
 
+  // Handler chamado após upload bem-sucedido (modo demo)
   const handleFilesUploaded = (uploadedFiles: File[], sourceType: 'drone' | 'satellite' | null, projectName: string) => {
     if (!sourceType) return
 
-    // Simula criação de um novo projeto
+    // Em modo demo (não autenticado), criar projeto local temporário
     const newProject: Project = {
-      id: Date.now().toString(),
+      id: `demo-${Date.now()}`,
       name: projectName,
       createdAt: new Date().toLocaleDateString('pt-BR'),
       status: 'processing',
       sourceType,
       imageCount: uploadedFiles.length,
-      area: Math.floor(Math.random() * 500) + 50, // área aleatória para simulação
+      area: 0, // Será calculado pelo backend quando autenticado
     }
 
     setProjects(prev => [newProject, ...prev])
     setIsCreatingProject(true)
 
-    // Simula processamento (após 5 segundos, atualiza para completo)
+    // Em modo demo, simular conclusão após alguns segundos
     setTimeout(() => {
       setProjects(prev => prev.map(p => {
         if (p.id === newProject.id) {
-          return {
-            ...p,
-            status: 'completed',
-            results: {
-              ndviMean: 0.65 + Math.random() * 0.15,
-              ndwiMean: 0.35 + Math.random() * 0.15,
-              plantCount: Math.floor(Math.random() * 100000) + 20000,
-              healthyPercentage: 65 + Math.floor(Math.random() * 20),
-              stressedPercentage: 15 + Math.floor(Math.random() * 10),
-              criticalPercentage: 5 + Math.floor(Math.random() * 5),
-              landUse: [
-                { name: 'Agricultura', value: Math.floor(p.area * 0.7), color: '#6AAF3D' },
-                { name: 'Floresta', value: Math.floor(p.area * 0.15), color: '#065F46' },
-                { name: 'Pastagem', value: Math.floor(p.area * 0.08), color: '#F59E0B' },
-                { name: 'Água', value: Math.floor(p.area * 0.04), color: '#3B82F6' },
-                { name: 'Solo Exposto', value: Math.floor(p.area * 0.03), color: '#92400E' },
-              ],
-              heightDistribution: [
-                { altura: '0-1m', quantidade: Math.floor(Math.random() * 10000) + 5000 },
-                { altura: '1-2m', quantidade: Math.floor(Math.random() * 20000) + 15000 },
-                { altura: '2-3m', quantidade: Math.floor(Math.random() * 30000) + 20000 },
-                { altura: '3-4m', quantidade: Math.floor(Math.random() * 15000) + 10000 },
-                { altura: '>4m', quantidade: Math.floor(Math.random() * 5000) + 2000 },
-              ],
-            },
-          }
+          return { ...p, status: 'completed' }
         }
         return p
       }))
       setIsCreatingProject(false)
-    }, 5000)
+      // Ir para a página de projetos
+      setActiveItem('projetos')
+      setActiveView('projects')
+    }, 3000)
+  }
+
+  // Handler para quando o upload real for concluído (modo autenticado)
+  const handleUploadComplete = async (projectId: number) => {
+    setIsCreatingProject(true)
+
+    // Recarregar projetos do backend
+    await loadProjectsFromApi()
+
+    setIsCreatingProject(false)
+
+    // Ir para a página de projetos
+    setActiveItem('projetos')
+    setActiveView('projects')
   }
 
   const renderContent = () => {
@@ -445,12 +345,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <UploadZone
               onFilesUploaded={handleFilesUploaded}
-              onUploadComplete={(projectId) => {
-                // Recarregar projetos após upload bem-sucedido
-                if (isAuthenticated) {
-                  loadProjectsFromApi()
-                }
-              }}
+              onUploadComplete={handleUploadComplete}
             />
             <div className="space-y-6">
               <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
@@ -542,6 +437,56 @@ export default function Home() {
             onProjectClick={handleProjectClick}
             onUploadClick={handleUploadClick}
           />
+        )
+
+      case 'settings':
+        return <SettingsPage currentUser={currentUser} />
+
+      case 'help':
+        return (
+          <div className="max-w-4xl mx-auto">
+            <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-8">
+              <div className="text-center mb-8">
+                <div className="w-20 h-20 bg-[#6AAF3D]/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-10 h-10 text-[#6AAF3D]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">Central de Ajuda</h2>
+                <p className="text-gray-400">Como podemos ajudar você hoje?</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                {[
+                  { title: 'Primeiros Passos', desc: 'Aprenda a usar o Roboroça', icon: '🚀' },
+                  { title: 'Upload de Imagens', desc: 'Como enviar imagens de drone/satélite', icon: '📤' },
+                  { title: 'Análises', desc: 'Entenda os tipos de análise disponíveis', icon: '📊' },
+                  { title: 'Relatórios', desc: 'Como gerar e exportar relatórios', icon: '📄' },
+                ].map((item, i) => (
+                  <button
+                    key={i}
+                    className="flex items-center gap-4 p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-[#6AAF3D]/30 transition-colors text-left group"
+                  >
+                    <span className="text-3xl">{item.icon}</span>
+                    <div>
+                      <p className="text-white font-medium group-hover:text-[#6AAF3D] transition-colors">{item.title}</p>
+                      <p className="text-gray-500 text-sm">{item.desc}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-6 bg-gradient-to-br from-[#6AAF3D]/10 to-transparent rounded-xl border border-[#6AAF3D]/20">
+                <h3 className="text-white font-semibold mb-2">Precisa de mais ajuda?</h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  Nossa equipe de suporte está disponível para ajudar você com qualquer dúvida.
+                </p>
+                <button className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white font-medium rounded-lg transition-colors">
+                  Entrar em contato
+                </button>
+              </div>
+            </div>
+          </div>
         )
 
       default: // dashboard
@@ -829,6 +774,8 @@ export default function Home() {
       case 'map': return { title: 'Visualizar Mapa', subtitle: 'Visualize e analise as camadas geoespaciais' }
       case 'reports': return { title: 'Relatórios', subtitle: 'Gerencie e baixe seus relatórios' }
       case 'projects': return { title: 'Meus Projetos', subtitle: `${projects.length} projeto${projects.length !== 1 ? 's' : ''} cadastrado${projects.length !== 1 ? 's' : ''}` }
+      case 'settings': return { title: 'Configurações', subtitle: 'Gerencie sua conta e preferências' }
+      case 'help': return { title: 'Ajuda', subtitle: 'Central de suporte e documentação' }
       default: return {
         title: 'Dashboard',
         subtitle: projects.length > 0
@@ -838,14 +785,110 @@ export default function Home() {
     }
   }
 
+  // Mostrar loading enquanto verifica autenticação
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0f0f1a] via-[#1a1a2e] to-[#0f2027] flex items-center justify-center">
+        <div className="text-center">
+          <img
+            src="/logo-icon.png"
+            alt="Roboroça"
+            className="w-24 h-24 mx-auto mb-4 animate-pulse"
+          />
+          <p className="text-gray-400">Carregando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Fechar menu mobile ao mudar de página
+  const handleMenuClickWithMobile = (id: string) => {
+    handleMenuClick(id)
+    setMobileMenuOpen(false)
+  }
+
+  // Mostrar tela de autenticação se não estiver autenticado
+  if (!isAuthenticated) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />
+  }
+
   return (
     <div className="min-h-screen bg-[#0f0f1a]">
-      <Sidebar activeItem={activeItem} onItemClick={handleMenuClick} />
+      {/* Sidebar Desktop - oculta em mobile */}
+      <div className="hidden lg:block">
+        <Sidebar
+          activeItem={activeItem}
+          onItemClick={handleMenuClick}
+          currentUser={currentUser}
+          onLogout={handleLogout}
+        />
+      </div>
 
-      <main className="ml-[280px]">
-        {activeView !== 'project-detail' && <Header {...getPageTitle()} />}
+      {/* Menu Mobile Overlay */}
+      <div
+        className={`
+          fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden
+          transition-opacity duration-300
+          ${mobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
+        `}
+        onClick={() => setMobileMenuOpen(false)}
+      />
 
-        <div className={activeView === 'project-detail' ? '' : 'p-6'}>
+      {/* Sidebar Mobile - deslizante */}
+      <div
+        className={`
+          fixed top-0 left-0 h-full w-[280px] z-50 lg:hidden
+          transform transition-transform duration-300 ease-out
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}
+      >
+        <Sidebar
+          activeItem={activeItem}
+          onItemClick={handleMenuClickWithMobile}
+          currentUser={currentUser}
+          onLogout={handleLogout}
+        />
+        {/* Botão de fechar no mobile */}
+        <button
+          onClick={() => setMobileMenuOpen(false)}
+          className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white hover:bg-gray-700/50 rounded-lg transition-colors lg:hidden"
+        >
+          <X size={20} />
+        </button>
+      </div>
+
+      {/* Conteúdo Principal */}
+      <main className="lg:ml-[280px] min-h-screen">
+        {activeView !== 'project-detail' && (
+          <header className="h-16 bg-gradient-to-r from-[#1a1a2e]/95 to-[#1a1a2e]/90 backdrop-blur-md border-b border-gray-700/30 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
+            {/* Botão Menu Mobile */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="lg:hidden p-2 text-gray-400 hover:text-white hover:bg-gray-700/50 rounded-xl transition-colors"
+              >
+                <Menu size={24} />
+              </button>
+              <div>
+                <h1 className="text-lg lg:text-xl font-bold text-white">{getPageTitle().title}</h1>
+                {getPageTitle().subtitle && (
+                  <p className="text-xs lg:text-sm text-gray-400 hidden sm:block">{getPageTitle().subtitle}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Header Actions - versão compacta */}
+            <Header
+              title=""
+              subtitle=""
+              currentUser={currentUser}
+              onLogout={handleLogout}
+              compact
+            />
+          </header>
+        )}
+
+        <div className={activeView === 'project-detail' ? '' : 'p-4 lg:p-6'}>
           {renderContent()}
         </div>
       </main>

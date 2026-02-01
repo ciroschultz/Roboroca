@@ -36,10 +36,13 @@ class ProjectResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
+    status: str = "pending"
     location: Optional[str]
     latitude: Optional[float]
     longitude: Optional[float]
     total_area_ha: Optional[float]
+    area_hectares: Optional[float] = None  # Alias para compatibilidade
+    image_count: int = 0
     owner_id: int
     created_at: datetime
     updated_at: datetime

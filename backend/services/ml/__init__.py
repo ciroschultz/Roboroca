@@ -54,6 +54,21 @@ except ImportError:
     extract_color_features = None
     detect_patterns = None
 
+try:
+    from backend.services.ml.video_analyzer import (
+        VideoAnalyzer,
+        VideoAnalysisResult,
+        analyze_video,
+        extract_video_keyframes,
+        get_video_analyzer,
+    )
+except ImportError:
+    VideoAnalyzer = None
+    VideoAnalysisResult = None
+    analyze_video = None
+    extract_video_keyframes = None
+    get_video_analyzer = None
+
 __all__ = [
     # Detector
     'ObjectDetector',
@@ -64,6 +79,7 @@ __all__ = [
     'LandSegmenter',
     'segment_image',
     'get_segmentation_percentages',
+    'segment_by_color',
     # Classifier
     'SceneClassifier',
     'classify_scene',
@@ -73,4 +89,10 @@ __all__ = [
     'extract_texture_features',
     'extract_color_features',
     'detect_patterns',
+    # Video Analyzer
+    'VideoAnalyzer',
+    'VideoAnalysisResult',
+    'analyze_video',
+    'extract_video_keyframes',
+    'get_video_analyzer',
 ]

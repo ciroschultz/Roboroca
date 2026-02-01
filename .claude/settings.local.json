@@ -3,7 +3,21 @@
     "allow": [
       "Bash(npx create-next-app@latest frontend --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)",
       "Bash(dir:*)",
-      "Bash(python -c:*)"
+      "Bash(python -c:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZW1haWwiOiJ0ZXN0ZTNAcm9ib3JvY2EuY29tIiwiZXhwIjoxNzcwNDc5ODY4fQ.XzVFbEsTi0wzj4zAMIj5kGpuuDB75DSiQIc1Z3KoIuM\")",
+      "Bash(curl:*)",
+      "Bash(taskkill:*)",
+      "Bash(tree:*)",
+      "Bash(powershell -Command \"Start-Process cmd -ArgumentList ''/c start-backend.bat'' -WindowStyle Normal\")",
+      "Bash(powershell -Command \"Start-Sleep -Seconds 15; try { $response = Invoke-WebRequest -Uri ''http://localhost:8000'' -TimeoutSec 10 -UseBasicParsing; Write-Host ''Backend respondendo:''; $response.Content } catch { Write-Host ''Erro ao conectar ao backend: '' $_Exception.Message }\")",
+      "Bash(powershell -Command \"Start-Sleep -Seconds 10; Invoke-RestMethod -Uri ''http://localhost:8000'' -TimeoutSec 10\")",
+      "Bash(powershell -Command \"Start-Process cmd -ArgumentList ''/c cd /d C:\\\\Users\\\\ciroa\\\\Roboroça && start-backend.bat'' -WindowStyle Normal\")",
+      "Bash(powershell -Command \"Start-Sleep -Seconds 20; Invoke-RestMethod -Uri ''http://localhost:8000'' -TimeoutSec 10\")",
+      "Bash(powershell -NoProfile -Command \"Set-Location ''C:\\\\Users\\\\ciroa\\\\Roboroça''; & ''.\\\\venv\\\\Scripts\\\\pip.exe'' install -r backend\\\\requirements.txt 2>&1 | Select-Object -First 50\")",
+      "Bash(powershell -NoProfile -Command \"Set-Location ''C:\\\\Users\\\\ciroa\\\\Roboroça''; & ''.\\\\venv\\\\Scripts\\\\pip.exe'' install -r backend\\\\requirements.txt\")",
+      "Bash(powershell -NoProfile -Command:*)"
     ]
   }
 }

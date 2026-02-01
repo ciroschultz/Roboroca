@@ -47,10 +47,19 @@ try:
         segment_by_color,
         classify_vegetation_type,
         extract_all_features,
+        analyze_video,
+        extract_video_keyframes,
     )
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
+
+# Serviço de geração de relatórios PDF
+try:
+    from backend.services.report_generation import ReportGenerator
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 router = APIRouter(prefix="/analysis")
 
@@ -1089,4 +1098,320 @@ async def full_ml_analysis(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro na análise: {str(e)}"
+        )
+
+
+# ============================================
+# ENDPOINTS DE VÍDEO
+# ============================================
+
+def is_video_file_check(filename: str) -> bool:
+    """Verificar se é arquivo de vídeo."""
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in {'.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv'}
+
+
+@router.post("/video/{image_id}", response_model=AnalysisResponse)
+async def analyze_video_endpoint(
+    image_id: int,
+    sample_rate: int = Query(30, ge=1, le=120, description="Taxa de amostragem em frames"),
+    max_frames: int = Query(50, ge=5, le=200, description="Máximo de frames a analisar"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Analisar vídeo de drone completo.
+
+    Extrai frames, executa análises de vegetação e gera resumo temporal.
+    """
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_video_file_check(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este endpoint é para vídeos. Use outros endpoints para imagens."
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="video_analysis",
+        status="processing",
+        image_id=image_id,
+        config={"sample_rate": sample_rate, "max_frames": max_frames}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Executar análise de vídeo
+        video_results = analyze_video(
+            image.file_path,
+            sample_rate=sample_rate,
+            max_frames=max_frames
+        )
+
+        processing_time = time.time() - start_time
+
+        # Preparar resultados
+        results = {
+            "video_info": video_results['video_info'],
+            "key_frames": video_results['key_frames'],
+            "frames_analyzed": video_results['frame_count_analyzed'],
+            "temporal_summary": video_results['temporal_summary'],
+            "mosaic_path": video_results.get('mosaic_path'),
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        if video_results.get('mosaic_path'):
+            analysis.output_files = [video_results['mosaic_path']]
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise de vídeo: {str(e)}"
+        )
+
+
+@router.post("/video/{image_id}/keyframes", response_model=AnalysisResponse)
+async def extract_keyframes_endpoint(
+    image_id: int,
+    num_frames: int = Query(10, ge=1, le=50, description="Número de key frames"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Extrair key frames de um vídeo.
+
+    Retorna frames distribuídos uniformemente ao longo do vídeo.
+    """
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_video_file_check(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este endpoint é para vídeos."
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="video_keyframes",
+        status="processing",
+        image_id=image_id,
+        config={"num_frames": num_frames}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Extrair key frames
+        key_frames = extract_video_keyframes(image.file_path, num_frames)
+
+        processing_time = time.time() - start_time
+
+        # Coletar caminhos dos frames
+        frame_paths = [kf.get('path') for kf in key_frames if kf.get('path')]
+
+        results = {
+            "key_frames": key_frames,
+            "total_extracted": len(key_frames),
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+        analysis.output_files = frame_paths
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na extração de key frames: {str(e)}"
+        )
+
+
+@router.get("/video/{image_id}/mosaic")
+async def get_video_mosaic(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obter mosaico de frames do vídeo.
+
+    Retorna imagem JPEG com grid de frames representativos.
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_video_file_check(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este endpoint é para vídeos."
+        )
+
+    # Procurar mosaico existente
+    output_dir = os.path.dirname(image.file_path)
+    video_name = os.path.splitext(image.filename)[0]
+    mosaic_path = os.path.join(output_dir, f"{video_name}_mosaic.jpg")
+
+    if os.path.exists(mosaic_path):
+        return FileResponse(mosaic_path, media_type="image/jpeg")
+
+    # Se não existe, gerar
+    if not ML_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviços de ML não disponíveis.",
+        )
+
+    try:
+        from backend.services.ml import get_video_analyzer
+        analyzer = get_video_analyzer()
+
+        # Extrair frames e criar mosaico
+        key_frames = analyzer.extract_key_frames(image.file_path, num_frames=16)
+
+        frames = []
+        for kf in key_frames:
+            if kf.get('path') and os.path.exists(kf['path']):
+                frames.append(np.array(PILImage.open(kf['path'])))
+
+        if frames:
+            mosaic = analyzer.create_mosaic(frames)
+            PILImage.fromarray(mosaic).save(mosaic_path, 'JPEG', quality=90)
+            return FileResponse(mosaic_path, media_type="image/jpeg")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível gerar o mosaico"
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao gerar mosaico: {str(e)}"
+        )
+
+
+# ============================================
+# ENDPOINT DE EXPORTAÇÃO PDF
+# ============================================
+
+@router.get("/export/pdf/{analysis_id}")
+async def export_analysis_pdf(
+    analysis_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Exportar análise como relatório PDF.
+
+    Gera PDF com todas as informações da análise, incluindo gráficos e recomendações.
+    """
+    if not PDF_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Serviço de geração de PDF não disponível.",
+        )
+
+    # Buscar análise
+    result = await db.execute(
+        select(Analysis)
+        .where(Analysis.id == analysis_id)
+        .where(Analysis.image.has(Image.project.has(Project.owner_id == current_user.id)))
+    )
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Análise não encontrada"
+        )
+
+    if analysis.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise ainda não foi concluída"
+        )
+
+    # Buscar imagem e projeto relacionados
+    image_result = await db.execute(
+        select(Image).where(Image.id == analysis.image_id)
+    )
+    image = image_result.scalar_one_or_none()
+
+    project = None
+    if image:
+        project_result = await db.execute(
+            select(Project).where(Project.id == image.project_id)
+        )
+        project = project_result.scalar_one_or_none()
+
+    try:
+        # Gerar PDF
+        generator = ReportGenerator()
+        pdf_bytes = generator.generate(
+            analysis=analysis,
+            project=project,
+            image=image
+        )
+
+        # Preparar nome do arquivo
+        project_name = project.name if project else "Roboroca"
+        safe_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        filename = f"relatorio_{safe_name}_{analysis.id}.pdf"
+
+        # Retornar PDF
+        from fastapi.responses import Response
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao gerar PDF: {str(e)}"
         )

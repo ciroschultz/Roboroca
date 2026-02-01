@@ -1,12 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Layers,
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Navigation,
   Ruler,
   Download,
   Eye,
@@ -21,12 +20,12 @@ import {
   Plus,
   ChevronRight,
   Leaf,
-  Droplets,
-  Mountain,
   Trees,
-  AlertTriangle,
   CheckCircle,
   Loader2,
+  AlertCircle,
+  RefreshCw,
+  Image as ImageIcon,
 } from 'lucide-react'
 
 type MapMode = 'project' | 'gps'
@@ -40,48 +39,66 @@ interface Layer {
   color: string
 }
 
-interface FakeProject {
-  id: string
+interface Project {
+  id: number
   name: string
-  area: number
-  date: string
-  thumbnail: string
-  ndviMean: number
-  plantCount: number
-  healthPercentage: number
+  description?: string
+  status: string
+  location?: string
+  latitude?: number
+  longitude?: number
+  total_area_ha?: number
+  area_hectares?: number
+  image_count: number
+  created_at: string
+  updated_at: string
 }
 
-// Projetos fake para demonstração (sincronizado com page.tsx)
-const fakeProjects: FakeProject[] = [
-  { id: '1', name: 'Fazenda São João - Talhão Norte', area: 450, date: '28/01/2026', thumbnail: '🌾', ndviMean: 0.72, plantCount: 125000, healthPercentage: 72 },
-  { id: '3', name: 'Propriedade Rural XYZ', area: 280, date: '25/01/2026', thumbnail: '🌱', ndviMean: 0.65, plantCount: 78000, healthPercentage: 68 },
-  { id: '4', name: 'Fazenda Boa Vista - Soja', area: 850, date: '22/01/2026', thumbnail: '🫘', ndviMean: 0.78, plantCount: 340000, healthPercentage: 85 },
-  { id: '5', name: 'Chácara do Vale - Hortaliças', area: 15, date: '20/01/2026', thumbnail: '🥬', ndviMean: 0.58, plantCount: 8500, healthPercentage: 45 },
-  { id: '6', name: 'Fazenda Santa Rita - Café', area: 180, date: '18/01/2026', thumbnail: '☕', ndviMean: 0.69, plantCount: 95000, healthPercentage: 78 },
-]
+interface ProjectImage {
+  id: number
+  filename: string
+  original_filename: string
+  file_path: string
+  width?: number
+  height?: number
+  center_lat?: number
+  center_lon?: number
+  status: string
+}
 
-// Plantas detectadas fake
-const fakeDetections = [
-  { id: 1, x: 25, y: 30, health: 92, height: 2.3, type: 'Saudável' },
-  { id: 2, x: 45, y: 50, health: 78, height: 1.8, type: 'Saudável' },
-  { id: 3, x: 65, y: 35, health: 45, height: 1.2, type: 'Estressada' },
-  { id: 4, x: 35, y: 70, health: 88, height: 2.1, type: 'Saudável' },
-  { id: 5, x: 75, y: 65, health: 23, height: 0.8, type: 'Crítica' },
-]
+interface AnalysisSummary {
+  project_id: number
+  project_name: string
+  total_images: number
+  analyzed_images: number
+  pending_images: number
+  vegetation_coverage_avg: number
+  health_index_avg: number
+  land_use_summary: Record<string, number>
+  status: string
+}
+
+const API_BASE = 'http://localhost:8000/api/v1'
 
 export default function MapView() {
   const [mode, setMode] = useState<MapMode>('project')
   const [zoom, setZoom] = useState(100)
   const [showLayers, setShowLayers] = useState(true)
-  const [selectedProject, setSelectedProject] = useState<FakeProject | null>(null)
-  const [selectedDetection, setSelectedDetection] = useState<typeof fakeDetections[0] | null>(null)
+
+  // Project mode states
+  const [projects, setProjects] = useState<Project[]>([])
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [projectImages, setProjectImages] = useState<ProjectImage[]>([])
+  const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null)
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   const [layers, setLayers] = useState<Layer[]>([
     { id: '1', name: 'Imagem Original', type: 'original', visible: true, opacity: 100, color: '#ffffff' },
-    { id: '2', name: 'NDVI', type: 'ndvi', visible: false, opacity: 80, color: '#6AAF3D' },
-    { id: '3', name: 'NDWI', type: 'ndwi', visible: false, opacity: 80, color: '#3B82F6' },
-    { id: '4', name: 'Classificação Solo', type: 'classification', visible: false, opacity: 70, color: '#F59E0B' },
-    { id: '5', name: 'Detecção Plantas', type: 'detection', visible: true, opacity: 100, color: '#EC4899' },
-    { id: '6', name: 'Mapa de Calor', type: 'heatmap', visible: false, opacity: 60, color: '#EF4444' },
+    { id: '2', name: 'Cobertura Vegetal', type: 'ndvi', visible: false, opacity: 80, color: '#6AAF3D' },
+    { id: '3', name: 'Saúde da Vegetação', type: 'classification', visible: false, opacity: 70, color: '#F59E0B' },
+    { id: '4', name: 'Mapa de Calor', type: 'heatmap', visible: false, opacity: 60, color: '#EF4444' },
   ])
 
   // GPS Mode states
@@ -91,6 +108,112 @@ export default function MapView() {
   const [radius, setRadius] = useState(500)
   const [satelliteSource, setSatelliteSource] = useState<'sentinel' | 'landsat'>('sentinel')
   const [areaSelected, setAreaSelected] = useState(false)
+
+  // Get auth token from localStorage
+  const getAuthToken = () => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('token')
+    }
+    return null
+  }
+
+  // Fetch projects from backend
+  const fetchProjects = async () => {
+    const token = getAuthToken()
+    if (!token) {
+      setError('Faça login para ver seus projetos')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/projects/`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setError('Sessão expirada. Faça login novamente.')
+          return
+        }
+        throw new Error('Erro ao carregar projetos')
+      }
+
+      const data = await response.json()
+      setProjects(data.projects || [])
+    } catch (err) {
+      setError('Erro ao carregar projetos. Verifique se o backend está rodando.')
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Fetch project images
+  const fetchProjectImages = async (projectId: number) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(`${API_BASE}/images/?project_id=${projectId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setProjectImages(data.images || [])
+        setSelectedImageIndex(0)
+      }
+    } catch (err) {
+      console.error('Erro ao carregar imagens:', err)
+    }
+  }
+
+  // Fetch analysis summary
+  const fetchAnalysisSummary = async (projectId: number) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(`${API_BASE}/projects/${projectId}/analysis-summary`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setAnalysisSummary(data)
+      }
+    } catch (err) {
+      console.error('Erro ao carregar análise:', err)
+      setAnalysisSummary(null)
+    }
+  }
+
+  // Load projects on mount
+  useEffect(() => {
+    if (mode === 'project') {
+      fetchProjects()
+    }
+  }, [mode])
+
+  // Load project details when selected
+  useEffect(() => {
+    if (selectedProject) {
+      fetchProjectImages(selectedProject.id)
+      fetchAnalysisSummary(selectedProject.id)
+    } else {
+      setProjectImages([])
+      setAnalysisSummary(null)
+    }
+  }, [selectedProject])
 
   const toggleLayer = (id: string) => {
     setLayers(prev =>
@@ -110,7 +233,6 @@ export default function MapView() {
 
   const handleActivateGPS = () => {
     setGpsLoading(true)
-    // Simula carregamento do GPS
     setTimeout(() => {
       setGpsActive(true)
       setGpsLoading(false)
@@ -120,6 +242,75 @@ export default function MapView() {
   const handleSelectArea = () => {
     setAreaSelected(true)
   }
+
+  const formatDate = (dateStr: string) => {
+    try {
+      return new Date(dateStr).toLocaleDateString('pt-BR')
+    } catch {
+      return dateStr
+    }
+  }
+
+  const getHealthColor = (health: number) => {
+    if (health >= 70) return 'text-green-400'
+    if (health >= 40) return 'text-yellow-400'
+    return 'text-red-400'
+  }
+
+  const getHealthLabel = (health: number) => {
+    if (health >= 70) return 'Bom'
+    if (health >= 40) return 'Moderado'
+    return 'Baixo'
+  }
+
+  // State for image blob URL
+  const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null)
+  const [imageLoading, setImageLoading] = useState(false)
+
+  // Load image with authentication
+  const loadImage = async (image: ProjectImage) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    setImageLoading(true)
+    try {
+      const response = await fetch(`${API_BASE}/images/${image.id}/thumbnail`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        // Revoke previous URL to free memory
+        if (currentImageUrl) {
+          URL.revokeObjectURL(currentImageUrl)
+        }
+        setCurrentImageUrl(url)
+      }
+    } catch (err) {
+      console.error('Erro ao carregar imagem:', err)
+      setCurrentImageUrl(null)
+    } finally {
+      setImageLoading(false)
+    }
+  }
+
+  // Load image when selected
+  useEffect(() => {
+    if (projectImages.length > 0 && selectedImageIndex >= 0) {
+      loadImage(projectImages[selectedImageIndex])
+    } else {
+      setCurrentImageUrl(null)
+    }
+    // Cleanup on unmount
+    return () => {
+      if (currentImageUrl) {
+        URL.revokeObjectURL(currentImageUrl)
+      }
+    }
+  }, [projectImages, selectedImageIndex])
 
   return (
     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden h-full flex flex-col">
@@ -146,7 +337,7 @@ export default function MapView() {
         >
           <Satellite size={18} />
           <span className="font-medium">Captura GPS</span>
-          <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-bold rounded">NOVO</span>
+          <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-bold rounded">EM BREVE</span>
         </button>
       </div>
 
@@ -157,39 +348,97 @@ export default function MapView() {
           {/* Lista de projetos ou visualização */}
           {!selectedProject ? (
             // Lista de projetos para selecionar
-            <div className="flex-1 p-6">
+            <div className="flex-1 p-6 overflow-y-auto">
               <div className="max-w-2xl mx-auto">
-                <h3 className="text-white text-lg font-semibold mb-2">Selecione um Projeto</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-white text-lg font-semibold">Selecione um Projeto</h3>
+                  <button
+                    onClick={fetchProjects}
+                    disabled={loading}
+                    className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Atualizar lista"
+                  >
+                    <RefreshCw size={18} className={`text-gray-400 ${loading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
                 <p className="text-gray-400 text-sm mb-6">Escolha um projeto para visualizar as imagens e análises no mapa</p>
 
-                <div className="space-y-3">
-                  {fakeProjects.map(project => (
-                    <div
-                      key={project.id}
-                      onClick={() => setSelectedProject(project)}
-                      className="flex items-center gap-4 p-4 bg-gray-800/50 hover:bg-gray-800 rounded-xl cursor-pointer transition-colors border border-gray-700/50 hover:border-[#6AAF3D]/50"
+                {/* Loading state */}
+                {loading && (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 size={32} className="text-[#6AAF3D] animate-spin" />
+                  </div>
+                )}
+
+                {/* Error state */}
+                {error && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <AlertCircle size={48} className="text-red-400 mb-4" />
+                    <p className="text-red-400 mb-4">{error}</p>
+                    <button
+                      onClick={fetchProjects}
+                      className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
                     >
-                      <div className="w-16 h-16 bg-gradient-to-br from-[#6AAF3D]/30 to-green-900/30 rounded-lg flex items-center justify-center text-3xl">
-                        {project.thumbnail}
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="text-white font-medium">{project.name}</h4>
-                        <p className="text-gray-500 text-sm">{project.area} ha • {project.date}</p>
-                        <div className="flex items-center gap-4 mt-1">
-                          <span className="text-xs text-gray-400">NDVI: <span className="text-[#6AAF3D]">{project.ndviMean}</span></span>
-                          <span className="text-xs text-gray-400">Plantas: <span className="text-blue-400">{(project.plantCount/1000).toFixed(0)}k</span></span>
+                      Tentar novamente
+                    </button>
+                  </div>
+                )}
+
+                {/* Empty state */}
+                {!loading && !error && projects.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <FolderOpen size={48} className="text-gray-600 mb-4" />
+                    <p className="text-gray-400 mb-2">Nenhum projeto encontrado</p>
+                    <p className="text-gray-500 text-sm">Crie um novo projeto na seção de Upload</p>
+                  </div>
+                )}
+
+                {/* Projects list */}
+                {!loading && !error && projects.length > 0 && (
+                  <div className="space-y-3">
+                    {projects.map(project => (
+                      <div
+                        key={project.id}
+                        onClick={() => setSelectedProject(project)}
+                        className="flex items-center gap-4 p-4 bg-gray-800/50 hover:bg-gray-800 rounded-xl cursor-pointer transition-colors border border-gray-700/50 hover:border-[#6AAF3D]/50"
+                      >
+                        <div className="w-16 h-16 bg-gradient-to-br from-[#6AAF3D]/30 to-green-900/30 rounded-lg flex items-center justify-center">
+                          <ImageIcon size={28} className="text-[#6AAF3D]" />
                         </div>
+                        <div className="flex-1">
+                          <h4 className="text-white font-medium">{project.name}</h4>
+                          <p className="text-gray-500 text-sm">
+                            {project.image_count} imagem(ns) • {formatDate(project.created_at)}
+                          </p>
+                          <div className="flex items-center gap-4 mt-1">
+                            {project.total_area_ha && (
+                              <span className="text-xs text-gray-400">
+                                Área: <span className="text-[#6AAF3D]">{project.total_area_ha} ha</span>
+                              </span>
+                            )}
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              project.status === 'completed'
+                                ? 'bg-green-500/20 text-green-400'
+                                : project.status === 'processing'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {project.status === 'completed' ? 'Analisado' :
+                               project.status === 'processing' ? 'Processando' : 'Pendente'}
+                            </span>
+                          </div>
+                        </div>
+                        <ChevronRight className="text-gray-500" size={20} />
                       </div>
-                      <ChevronRight className="text-gray-500" size={20} />
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
             // Visualização do projeto selecionado
             <>
-              {/* Área do mapa */}
+              {/* Área do mapa/imagem */}
               <div className="flex-1 relative bg-gray-900">
                 {/* Toolbar do mapa */}
                 <div className="absolute top-4 left-4 right-4 z-10 flex items-center justify-between">
@@ -212,74 +461,66 @@ export default function MapView() {
                   </div>
                 </div>
 
-                {/* Imagem fake do projeto com gradient representando NDVI */}
-                <div className="absolute inset-0 bg-gradient-to-br from-green-900/80 via-green-700/60 to-yellow-700/40" />
-
-                {/* Grid simulando parcelas */}
-                <div className="absolute inset-0 opacity-30" style={{
-                  backgroundImage: `
-                    linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
-                  `,
-                  backgroundSize: '50px 50px'
-                }} />
-
-                {/* Detecções de plantas (pontos clicáveis) */}
-                {layers.find(l => l.type === 'detection')?.visible && fakeDetections.map(det => (
-                  <div
-                    key={det.id}
-                    onClick={() => setSelectedDetection(det)}
-                    className={`absolute w-8 h-8 -ml-4 -mt-4 rounded-full cursor-pointer transition-all hover:scale-125 flex items-center justify-center ${
-                      selectedDetection?.id === det.id ? 'ring-2 ring-white scale-125' : ''
-                    } ${
-                      det.health >= 70 ? 'bg-green-500/80' :
-                      det.health >= 40 ? 'bg-yellow-500/80' : 'bg-red-500/80'
-                    }`}
-                    style={{ left: `${det.x}%`, top: `${det.y}%` }}
-                  >
-                    <Trees size={16} className="text-white" />
+                {/* Exibir imagem do projeto */}
+                {projectImages.length > 0 ? (
+                  <div className="absolute inset-0">
+                    {imageLoading ? (
+                      <div className="flex items-center justify-center h-full">
+                        <Loader2 size={48} className="text-[#6AAF3D] animate-spin" />
+                      </div>
+                    ) : currentImageUrl ? (
+                      <img
+                        src={currentImageUrl}
+                        alt={projectImages[selectedImageIndex]?.original_filename || 'Imagem do projeto'}
+                        className="w-full h-full object-contain bg-black"
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <div className="text-center">
+                          <AlertCircle size={48} className="text-gray-600 mx-auto mb-4" />
+                          <p className="text-gray-400">Erro ao carregar imagem</p>
+                        </div>
+                      </div>
+                    )}
+                    {/* Overlay com gradiente se necessário */}
+                    {layers.find(l => l.type === 'ndvi')?.visible && (
+                      <div className="absolute inset-0 bg-gradient-to-br from-green-500/30 via-yellow-500/20 to-red-500/20 mix-blend-overlay pointer-events-none" />
+                    )}
+                    {layers.find(l => l.type === 'heatmap')?.visible && (
+                      <div className="absolute inset-0 bg-gradient-to-br from-red-500/40 via-yellow-500/30 to-green-500/20 mix-blend-overlay pointer-events-none" />
+                    )}
                   </div>
-                ))}
+                ) : (
+                  // Placeholder se não houver imagens
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center">
+                      <ImageIcon size={64} className="text-gray-600 mx-auto mb-4" />
+                      <p className="text-gray-400">Nenhuma imagem neste projeto</p>
+                      <p className="text-gray-500 text-sm mt-2">Faça upload de imagens na seção de Upload</p>
+                    </div>
+                  </div>
+                )}
 
-                {/* Popup de detecção selecionada */}
-                {selectedDetection && (
-                  <div
-                    className="absolute z-20 bg-gray-900/95 border border-gray-700 rounded-xl p-4 w-56 shadow-xl"
-                    style={{
-                      left: `${Math.min(selectedDetection.x, 70)}%`,
-                      top: `${Math.min(selectedDetection.y + 5, 60)}%`
-                    }}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-white font-medium">Planta #{selectedDetection.id}</span>
-                      <button onClick={() => setSelectedDetection(null)} className="text-gray-500 hover:text-white">×</button>
-                    </div>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Status:</span>
-                        <span className={`font-medium ${
-                          selectedDetection.type === 'Saudável' ? 'text-green-400' :
-                          selectedDetection.type === 'Estressada' ? 'text-yellow-400' : 'text-red-400'
-                        }`}>{selectedDetection.type}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Saúde:</span>
-                        <span className="text-white">{selectedDetection.health}%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Altura:</span>
-                        <span className="text-white">{selectedDetection.height}m</span>
-                      </div>
-                      <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
-                        <div
-                          className={`h-2 rounded-full ${
-                            selectedDetection.health >= 70 ? 'bg-green-500' :
-                            selectedDetection.health >= 40 ? 'bg-yellow-500' : 'bg-red-500'
-                          }`}
-                          style={{ width: `${selectedDetection.health}%` }}
-                        />
-                      </div>
-                    </div>
+                {/* Navegação entre imagens */}
+                {projectImages.length > 1 && (
+                  <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-gray-800/90 rounded-lg">
+                    <button
+                      onClick={() => setSelectedImageIndex(Math.max(0, selectedImageIndex - 1))}
+                      disabled={selectedImageIndex === 0}
+                      className="p-1 hover:bg-gray-700 rounded disabled:opacity-50"
+                    >
+                      ←
+                    </button>
+                    <span className="text-white text-sm px-2">
+                      {selectedImageIndex + 1} / {projectImages.length}
+                    </span>
+                    <button
+                      onClick={() => setSelectedImageIndex(Math.min(projectImages.length - 1, selectedImageIndex + 1))}
+                      disabled={selectedImageIndex === projectImages.length - 1}
+                      className="p-1 hover:bg-gray-700 rounded disabled:opacity-50"
+                    >
+                      →
+                    </button>
                   </div>
                 )}
 
@@ -305,7 +546,9 @@ export default function MapView() {
                 {/* Info do projeto */}
                 <div className="absolute left-4 bottom-4 px-4 py-3 bg-gray-800/90 rounded-lg">
                   <p className="text-white font-medium text-sm">{selectedProject.name}</p>
-                  <p className="text-gray-400 text-xs">{selectedProject.area} ha • {selectedProject.plantCount.toLocaleString()} plantas detectadas</p>
+                  <p className="text-gray-400 text-xs">
+                    {selectedProject.image_count} imagem(ns) • {formatDate(selectedProject.created_at)}
+                  </p>
                 </div>
 
                 {/* Escala */}
@@ -315,7 +558,7 @@ export default function MapView() {
                 </div>
               </div>
 
-              {/* Painel lateral de camadas */}
+              {/* Painel lateral de camadas e informações */}
               <div className="w-72 border-l border-gray-700/50 bg-[#12121e] p-4 overflow-y-auto">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-white font-medium">Camadas</h4>
@@ -373,37 +616,55 @@ export default function MapView() {
                   ))}
                 </div>
 
-                {/* Informações do projeto */}
+                {/* Informações de análise do projeto */}
                 <div className="mt-6 pt-4 border-t border-gray-700/50">
-                  <h5 className="text-white text-sm font-medium mb-3">Informações</h5>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
-                      <Leaf className="text-[#6AAF3D]" size={18} />
-                      <div>
-                        <p className="text-xs text-gray-500">NDVI Médio</p>
-                        <p className="text-white font-medium">{selectedProject.ndviMean}</p>
+                  <h5 className="text-white text-sm font-medium mb-3">Análise do Projeto</h5>
+
+                  {analysisSummary ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
+                        <Leaf className="text-[#6AAF3D]" size={18} />
+                        <div>
+                          <p className="text-xs text-gray-500">Cobertura Vegetal</p>
+                          <p className="text-white font-medium">
+                            {analysisSummary.vegetation_coverage_avg > 0
+                              ? `${analysisSummary.vegetation_coverage_avg.toFixed(1)}%`
+                              : 'N/A'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
+                        <Trees className="text-blue-400" size={18} />
+                        <div>
+                          <p className="text-xs text-gray-500">Imagens Analisadas</p>
+                          <p className="text-white font-medium">
+                            {analysisSummary.analyzed_images} / {analysisSummary.total_images}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
+                        <CheckCircle className={getHealthColor(analysisSummary.health_index_avg)} size={18} />
+                        <div>
+                          <p className="text-xs text-gray-500">Índice de Saúde</p>
+                          <p className={`font-medium ${getHealthColor(analysisSummary.health_index_avg)}`}>
+                            {analysisSummary.health_index_avg > 0
+                              ? `${analysisSummary.health_index_avg.toFixed(0)}% - ${getHealthLabel(analysisSummary.health_index_avg)}`
+                              : 'N/A'}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
-                      <Trees className="text-blue-400" size={18} />
-                      <div>
-                        <p className="text-xs text-gray-500">Plantas Detectadas</p>
-                        <p className="text-white font-medium">{selectedProject.plantCount.toLocaleString()}</p>
-                      </div>
+                  ) : (
+                    <div className="text-center py-4">
+                      <p className="text-gray-500 text-sm">Nenhuma análise disponível</p>
+                      <p className="text-gray-600 text-xs mt-1">Execute uma análise nas imagens do projeto</p>
                     </div>
-                    <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
-                      <CheckCircle className="text-green-400" size={18} />
-                      <div>
-                        <p className="text-xs text-gray-500">Saúde Geral</p>
-                        <p className="text-white font-medium">{selectedProject.healthPercentage}%</p>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Legenda */}
                 <div className="mt-6 pt-4 border-t border-gray-700/50">
-                  <h5 className="text-white text-sm font-medium mb-3">Legenda</h5>
+                  <h5 className="text-white text-sm font-medium mb-3">Legenda - Saúde</h5>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded-full bg-green-500"></div>
@@ -411,11 +672,11 @@ export default function MapView() {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded-full bg-yellow-500"></div>
-                      <span className="text-xs text-gray-400">Estressada (40-69%)</span>
+                      <span className="text-xs text-gray-400">Moderado (40-69%)</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 rounded-full bg-red-500"></div>
-                      <span className="text-xs text-gray-400">Crítica (&lt;40%)</span>
+                      <span className="text-xs text-gray-400">Crítico (&lt;40%)</span>
                     </div>
                   </div>
                 </div>
@@ -456,12 +717,15 @@ export default function MapView() {
                       </>
                     )}
                   </button>
+                  <p className="text-yellow-500 text-xs mt-4">
+                    Funcionalidade em desenvolvimento
+                  </p>
                 </div>
               </div>
             ) : (
               // Mapa com GPS ativo
               <>
-                {/* Mapa de satélite fake */}
+                {/* Mapa de satélite placeholder */}
                 <div className="absolute inset-0 bg-gradient-to-br from-green-900/50 via-emerald-800/40 to-teal-900/50" />
 
                 {/* Textura de terreno */}
@@ -712,6 +976,10 @@ export default function MapView() {
                     Criar Projeto
                   </button>
                 </div>
+
+                <p className="text-yellow-500 text-xs text-center mt-4">
+                  Funcionalidade em desenvolvimento
+                </p>
               </>
             ) : (
               // Estado inicial - GPS não ativo
