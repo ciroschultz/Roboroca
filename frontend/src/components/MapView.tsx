@@ -40,7 +40,7 @@ type MapMode = 'project' | 'gps'
 interface Layer {
   id: string
   name: string
-  type: 'original' | 'ndvi' | 'ndwi' | 'classification' | 'detection' | 'heatmap'
+  type: 'original' | 'vegetation' | 'health' | 'classification' | 'detection' | 'heatmap'
   visible: boolean
   opacity: number
   color: string
@@ -120,8 +120,19 @@ interface Annotation {
     end?: { x: number; y: number }
     label?: string
     color?: string
+    distanceM?: number  // Distância real em metros para medições
+    areaM2?: number     // Área real em m² para polígonos
   }
   isNew?: boolean
+}
+
+interface ImageGSD {
+  image_id: number
+  gsd_m: number
+  gsd_cm: number
+  width: number
+  height: number
+  is_estimated: boolean
 }
 
 const API_BASE = 'http://localhost:8000/api/v1'
@@ -142,8 +153,8 @@ export default function MapView() {
 
   const [layers, setLayers] = useState<Layer[]>([
     { id: '1', name: 'Imagem Original', type: 'original', visible: true, opacity: 100, color: '#ffffff' },
-    { id: '2', name: 'Cobertura Vegetal', type: 'ndvi', visible: false, opacity: 80, color: '#6AAF3D' },
-    { id: '3', name: 'Saúde da Vegetação', type: 'classification', visible: false, opacity: 70, color: '#F59E0B' },
+    { id: '2', name: 'Cobertura Vegetal', type: 'vegetation', visible: false, opacity: 80, color: '#6AAF3D' },
+    { id: '3', name: 'Saúde da Vegetação', type: 'health', visible: false, opacity: 70, color: '#F59E0B' },
     { id: '4', name: 'Mapa de Calor', type: 'heatmap', visible: false, opacity: 60, color: '#EF4444' },
   ])
 
@@ -163,9 +174,58 @@ export default function MapView() {
   const [showInfoPanel, setShowInfoPanel] = useState(true)
   const [imageAnalysis, setImageAnalysis] = useState<ImageAnalysis | null>(null)
   const [savingAnnotation, setSavingAnnotation] = useState(false)
+  const [imageGSD, setImageGSD] = useState<ImageGSD | null>(null)
 
   // Colors for annotations
   const annotationColors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500', '#800080']
+
+  // Calcular distância real em metros usando GSD
+  const calculateRealDistance = (p1: { x: number; y: number }, p2: { x: number; y: number }): number => {
+    if (!imageGSD) return 0
+    const pixelDistance = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2))
+    return pixelDistance * imageGSD.gsd_m
+  }
+
+  // Calcular área real de polígono em m² usando fórmula de Shoelace
+  const calculatePolygonArea = (points: number[][]): number => {
+    if (!imageGSD || points.length < 3) return 0
+    let area = 0
+    const n = points.length
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n
+      area += points[i][0] * points[j][1]
+      area -= points[j][0] * points[i][1]
+    }
+    const pixelArea = Math.abs(area / 2)
+    // Converter de pixels² para m² usando GSD²
+    return pixelArea * imageGSD.gsd_m * imageGSD.gsd_m
+  }
+
+  // Formatar área para exibição
+  const formatArea = (areaM2: number): string => {
+    if (areaM2 >= 10000) {
+      return `${(areaM2 / 10000).toFixed(2)} ha`
+    }
+    return `${areaM2.toFixed(1)} m²`
+  }
+
+  // Formatar distância para exibição
+  const formatDistance = (distanceM: number): string => {
+    if (distanceM >= 1000) {
+      return `${(distanceM / 1000).toFixed(2)} km`
+    }
+    return `${distanceM.toFixed(2)} m`
+  }
+
+  // Calcular centróide do polígono para posicionar texto
+  const calculatePolygonCentroid = (points: number[][]): { x: number; y: number } => {
+    let sumX = 0, sumY = 0
+    for (const p of points) {
+      sumX += p[0]
+      sumY += p[1]
+    }
+    return { x: sumX / points.length, y: sumY / points.length }
+  }
 
   // Get auth token from localStorage
   const getAuthToken = () => {
@@ -313,6 +373,28 @@ export default function MapView() {
     }
   }
 
+  // Fetch GSD for image
+  const fetchImageGSD = async (imageId: number) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(`${API_BASE}/images/${imageId}/gsd`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setImageGSD(data)
+      }
+    } catch (err) {
+      console.error('Erro ao carregar GSD:', err)
+      setImageGSD(null)
+    }
+  }
+
   // Save annotation
   const saveAnnotation = async (annotation: Annotation) => {
     const token = getAuthToken()
@@ -391,14 +473,16 @@ export default function MapView() {
         })
       } else if (currentAnnotation.type === 'measurement' && currentAnnotation.data.start) {
         const start = currentAnnotation.data.start
-        const distance = Math.sqrt(Math.pow(x - start.x, 2) + Math.pow(y - start.y, 2))
+        const end = { x, y }
+        const distanceM = calculateRealDistance(start, end)
         const newAnnotation: Annotation = {
           type: 'measurement',
           data: {
             start,
-            end: { x, y },
+            end,
             color: selectedColor,
-            label: `${distance.toFixed(0)}px`,
+            label: imageGSD ? formatDistance(distanceM) : `${Math.sqrt(Math.pow(x - start.x, 2) + Math.pow(y - start.y, 2)).toFixed(0)}px`,
+            distanceM: distanceM,
           },
           isNew: true,
         }
@@ -426,11 +510,14 @@ export default function MapView() {
   // Handle double click to finish polygon
   const handleCanvasDoubleClick = () => {
     if (activeTool === 'polygon' && currentAnnotation && currentAnnotation.data.points && currentAnnotation.data.points.length >= 3) {
+      const points = currentAnnotation.data.points
+      const areaM2 = calculatePolygonArea(points)
       const newAnnotation: Annotation = {
         type: 'polygon',
         data: {
           ...currentAnnotation.data,
-          label: `Area ${annotations.filter(a => a.type === 'polygon').length + 1}`,
+          label: imageGSD ? formatArea(areaM2) : `Área ${annotations.filter(a => a.type === 'polygon').length + 1}`,
+          areaM2: areaM2,
         },
         isNew: true,
       }
@@ -439,6 +526,19 @@ export default function MapView() {
       setCurrentAnnotation(null)
     }
   }
+
+  // Handle ESC key to cancel current drawing
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && currentAnnotation) {
+        setCurrentAnnotation(null)
+        // Optionally reset tool to select mode
+        // setActiveTool('select')
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [currentAnnotation])
 
   // Load projects on mount
   useEffect(() => {
@@ -563,10 +663,12 @@ export default function MapView() {
       loadImage(projectImages[selectedImageIndex])
       fetchImageAnalysis(projectImages[selectedImageIndex].id)
       fetchAnnotations(projectImages[selectedImageIndex].id)
+      fetchImageGSD(projectImages[selectedImageIndex].id)
     } else {
       setCurrentImageUrl(null)
       setImageAnalysis(null)
       setAnnotations([])
+      setImageGSD(null)
     }
     // Cleanup on unmount
     return () => {
@@ -733,14 +835,14 @@ export default function MapView() {
                       <button
                         onClick={() => setActiveTool('polygon')}
                         className={`p-2 rounded-lg transition-colors ${activeTool === 'polygon' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Desenhar poligono (duplo-clique para fechar)"
+                        title="Desenhar polígono - duplo-clique para fechar, ESC para cancelar"
                       >
                         <PenTool size={18} />
                       </button>
                       <button
                         onClick={() => setActiveTool('measurement')}
                         className={`p-2 rounded-lg transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Medir distancia"
+                        title="Medir distância em metros - clique início e fim, ESC para cancelar"
                       >
                         <Ruler size={18} />
                       </button>
@@ -812,7 +914,7 @@ export default function MapView() {
                       </div>
                     )}
                     {/* Overlay com gradiente se necessário */}
-                    {layers.find(l => l.type === 'ndvi')?.visible && (
+                    {layers.find(l => l.type === 'vegetation')?.visible && (
                       <div className="absolute inset-0 bg-gradient-to-br from-green-500/30 via-yellow-500/20 to-red-500/20 mix-blend-overlay pointer-events-none" />
                     )}
                     {layers.find(l => l.type === 'heatmap')?.visible && (
@@ -865,26 +967,38 @@ export default function MapView() {
                               <circle cx={ann.data.start.x} cy={ann.data.start.y} r={5} fill={ann.data.color || '#0000FF'} stroke="white" strokeWidth={2} />
                               <circle cx={ann.data.end.x} cy={ann.data.end.y} r={5} fill={ann.data.color || '#0000FF'} stroke="white" strokeWidth={2} />
                               {ann.data.label && (
-                                <text
-                                  x={(ann.data.start.x + ann.data.end.x) / 2}
-                                  y={(ann.data.start.y + ann.data.end.y) / 2 - 8}
-                                  fill="white"
-                                  fontSize={12}
-                                  fontWeight="bold"
-                                  textAnchor="middle"
-                                >
-                                  {ann.data.label}
-                                </text>
+                                <>
+                                  {/* Fundo do texto para melhor legibilidade */}
+                                  <rect
+                                    x={(ann.data.start.x + ann.data.end.x) / 2 - 35}
+                                    y={(ann.data.start.y + ann.data.end.y) / 2 - 22}
+                                    width={70}
+                                    height={18}
+                                    fill="rgba(0,0,0,0.7)"
+                                    rx={4}
+                                  />
+                                  <text
+                                    x={(ann.data.start.x + ann.data.end.x) / 2}
+                                    y={(ann.data.start.y + ann.data.end.y) / 2 - 8}
+                                    fill="white"
+                                    fontSize={12}
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {ann.data.label}
+                                  </text>
+                                </>
                               )}
                             </g>
                           )
                         }
                         if (ann.type === 'polygon' && ann.data.points && ann.data.points.length >= 3) {
-                          const points = ann.data.points.map(p => p.join(',')).join(' ')
+                          const svgPoints = ann.data.points.map(p => p.join(',')).join(' ')
+                          const centroid = calculatePolygonCentroid(ann.data.points)
                           return (
                             <g key={ann.id || `new-${idx}`}>
                               <polygon
-                                points={points}
+                                points={svgPoints}
                                 fill={`${ann.data.color || '#00FF00'}40`}
                                 stroke={ann.data.color || '#00FF00'}
                                 strokeWidth={2}
@@ -894,10 +1008,28 @@ export default function MapView() {
                                   if (activeTool === 'eraser' && ann.id) deleteAnnotation(ann.id)
                                 }}
                               />
-                              {ann.data.label && ann.data.points[0] && (
-                                <text x={ann.data.points[0][0]} y={ann.data.points[0][1] - 8} fill="white" fontSize={12} fontWeight="bold">
-                                  {ann.data.label}
-                                </text>
+                              {ann.data.label && (
+                                <>
+                                  {/* Fundo do texto para melhor legibilidade */}
+                                  <rect
+                                    x={centroid.x - 35}
+                                    y={centroid.y - 10}
+                                    width={70}
+                                    height={20}
+                                    fill="rgba(0,0,0,0.7)"
+                                    rx={4}
+                                  />
+                                  <text
+                                    x={centroid.x}
+                                    y={centroid.y + 5}
+                                    fill="white"
+                                    fontSize={12}
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {ann.data.label}
+                                  </text>
+                                </>
                               )}
                             </g>
                           )
@@ -980,10 +1112,12 @@ export default function MapView() {
                   </p>
                 </div>
 
-                {/* Escala */}
+                {/* Escala dinâmica baseada no GSD */}
                 <div className="absolute right-4 bottom-4 flex items-center gap-2 px-3 py-2 bg-gray-800/90 rounded-lg">
                   <div className="h-1 w-16 bg-white rounded"></div>
-                  <span className="text-xs text-gray-300">100m</span>
+                  <span className="text-xs text-gray-300">
+                    {imageGSD ? formatDistance(64 * imageGSD.gsd_m) : '~2m'}
+                  </span>
                 </div>
 
                 {/* Painel de informacoes da imagem */}
@@ -1016,6 +1150,19 @@ export default function MapView() {
                           <p className="text-xs text-gray-500 uppercase tracking-wider">Coordenadas GPS</p>
                           <p className="text-white text-sm font-mono">
                             {projectImages[selectedImageIndex].center_lat?.toFixed(6)}, {projectImages[selectedImageIndex].center_lon?.toFixed(6)}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* GSD - Ground Sample Distance */}
+                      {imageGSD && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider">Resolucao do Solo (GSD)</p>
+                          <p className="text-white text-sm">
+                            {imageGSD.gsd_cm.toFixed(2)} cm/pixel
+                            {imageGSD.is_estimated && (
+                              <span className="text-yellow-400 text-xs ml-1">(estimado)</span>
+                            )}
                           </p>
                         </div>
                       )}

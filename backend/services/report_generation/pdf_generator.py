@@ -257,13 +257,13 @@ class ReportGenerator:
 
         results = analysis.results or {}
 
-        # Métricas principais
+        # Métricas principais - Primeira linha
         y_start = pdf.get_y()
 
         # Vegetação
         veg_pct = self._get_vegetation_percentage(results)
         pdf.set_xy(10, y_start)
-        pdf.add_metric_box("Vegetação", f"{veg_pct:.0f}%", COLORS['primary'])
+        pdf.add_metric_box("Cobertura", f"{veg_pct:.0f}%", COLORS['primary'])
 
         # Saúde
         health = self._get_health_index(results)
@@ -271,10 +271,25 @@ class ReportGenerator:
         pdf.add_metric_box("Saúde", f"{health:.0f}%", color)
 
         # Área
-        if project and project.area_hectares:
-            pdf.add_metric_box("Área", f"{project.area_hectares:.0f} ha", COLORS['secondary'])
+        area_ha = 0
+        if project and project.total_area_ha:
+            area_ha = project.total_area_ha
+            pdf.add_metric_box("Área", f"{area_ha:.2f} ha", COLORS['secondary'])
+
+        # Árvores detectadas
+        tree_count = self._get_tree_count(results)
+        if tree_count > 0:
+            pdf.add_metric_box("Árvores", str(tree_count), COLORS['primary'])
 
         pdf.ln(30)
+
+        # Segunda linha de métricas (se houver área e árvores)
+        if area_ha > 0 and tree_count > 0:
+            y_start2 = pdf.get_y()
+            density = tree_count / area_ha
+            pdf.set_xy(10, y_start2)
+            pdf.add_metric_box("Densidade", f"{density:.0f}/ha", COLORS['secondary'])
+            pdf.ln(30)
 
         # Tipo de análise
         pdf.add_key_value("Tipo de Análise", analysis.analysis_type.replace('_', ' ').title())
@@ -534,6 +549,34 @@ class ReportGenerator:
 
             pdf.ln(3)
 
+        # Contagem de Árvores por Segmentação
+        if 'tree_count' in results:
+            pdf.subsection_title("Contagem de Árvores (Segmentação ExG)")
+            tree = results['tree_count']
+
+            if tree.get('total_trees') is not None:
+                pdf.add_key_value("Total de Árvores", str(tree['total_trees']))
+            if tree.get('coverage_percentage') is not None:
+                pdf.add_key_value("Cobertura de Árvores", f"{tree['coverage_percentage']:.2f}%")
+            if tree.get('avg_tree_area') is not None:
+                pdf.add_key_value("Área Média por Árvore", f"{tree['avg_tree_area']:.1f} pixels")
+            if tree.get('total_tree_area_pixels') is not None:
+                pdf.add_key_value("Área Total de Árvores", f"{tree['total_tree_area_pixels']:,} pixels")
+            if tree.get('min_tree_area') is not None and tree.get('max_tree_area') is not None:
+                pdf.add_key_value("Área Min/Max", f"{tree['min_tree_area']} - {tree['max_tree_area']} pixels")
+
+            # Parâmetros utilizados
+            params = tree.get('parameters', {})
+            if params:
+                pdf.ln(2)
+                pdf.add_text("Parâmetros da análise:", bold=True)
+                if params.get('exg_threshold') is not None:
+                    pdf.add_key_value("Limiar ExG", f"{params['exg_threshold']:.4f}")
+                if params.get('min_tree_area') is not None:
+                    pdf.add_key_value("Área Mínima", f"{params['min_tree_area']} pixels")
+
+            pdf.ln(3)
+
         # Features visuais
         if 'visual_features' in results:
             pdf.subsection_title("Caracteristicas Visuais")
@@ -552,6 +595,67 @@ class ReportGenerator:
                         pdf.add_key_value(key.replace('_', ' ').title(), f"{val:.3f}")
                     elif isinstance(val, str):
                         pdf.add_key_value(key.replace('_', ' ').title(), val)
+
+            pdf.ln(3)
+
+        # Análise de Cores
+        if 'color_analysis' in results:
+            pdf.subsection_title("Análise de Cores")
+            colors = results['color_analysis']
+
+            if colors.get('dominant_colors'):
+                pdf.add_text("Cores Dominantes:", bold=True)
+                for i, color_info in enumerate(colors['dominant_colors'][:5], 1):
+                    if isinstance(color_info, dict):
+                        color_name = color_info.get('name', f'Cor {i}')
+                        pct = color_info.get('percentage', 0)
+                        pdf.add_key_value(f"  {i}. {color_name}", f"{pct:.1f}%")
+
+            if colors.get('green_index') is not None:
+                pdf.add_key_value("Índice de Verde", f"{colors['green_index']:.3f}")
+            if colors.get('brightness') is not None:
+                pdf.add_key_value("Brilho Médio", f"{colors['brightness']:.1f}")
+            if colors.get('saturation') is not None:
+                pdf.add_key_value("Saturação Média", f"{colors['saturation']:.1f}")
+
+            pdf.ln(3)
+
+        # Histograma (resumo estatístico)
+        if 'histogram' in results:
+            hist = results['histogram']
+            if hist.get('statistics'):
+                pdf.subsection_title("Estatísticas de Imagem")
+                stats = hist['statistics']
+
+                if stats.get('mean'):
+                    means = stats['mean']
+                    if isinstance(means, dict):
+                        for channel, val in means.items():
+                            pdf.add_key_value(f"Média ({channel.upper()})", f"{val:.1f}")
+                    elif isinstance(means, (int, float)):
+                        pdf.add_key_value("Média", f"{means:.1f}")
+
+                if stats.get('std'):
+                    stds = stats['std']
+                    if isinstance(stds, dict):
+                        for channel, val in stds.items():
+                            pdf.add_key_value(f"Desvio Padrão ({channel.upper()})", f"{val:.1f}")
+
+                pdf.ln(3)
+
+        # Informações da Imagem (do resultado da análise)
+        if 'image_info' in results:
+            img_info = results['image_info']
+            pdf.subsection_title("Informações Técnicas da Imagem")
+
+            if img_info.get('width') and img_info.get('height'):
+                pdf.add_key_value("Resolução", f"{img_info['width']} x {img_info['height']} pixels")
+            if img_info.get('channels'):
+                pdf.add_key_value("Canais", str(img_info['channels']))
+            if img_info.get('dtype'):
+                pdf.add_key_value("Tipo de Dados", str(img_info['dtype']))
+            if img_info.get('file_size_mb'):
+                pdf.add_key_value("Tamanho", f"{img_info['file_size_mb']:.2f} MB")
 
             pdf.ln(3)
 
@@ -821,6 +925,24 @@ class ReportGenerator:
                     )
                 })
 
+        # Contagem de árvores
+        if 'tree_count' in results:
+            tree = results['tree_count']
+            total_trees = tree.get('total_trees', 0)
+            coverage = tree.get('coverage_percentage', 0)
+            if total_trees > 0:
+                recommendations.append({
+                    'type': 'success',
+                    'message': 'Foram identificadas {} arvores na area analisada, com cobertura de {:.2f}% da imagem.'.format(
+                        total_trees, coverage
+                    )
+                })
+                if coverage > 5:
+                    recommendations.append({
+                        'type': 'info',
+                        'message': 'A area apresenta boa densidade de arvores. Para calculo preciso de densidade por hectare, verifique a area total do projeto.'
+                    })
+
         # Se não houver recomendações específicas
         if not recommendations:
             recommendations.append({
@@ -848,4 +970,23 @@ class ReportGenerator:
             return results['health'].get('health_index', 0)
         if 'summary' in results:
             return results['summary'].get('health_index', 0)
+        return 0
+
+    def _get_tree_count(self, results: Dict[str, Any]) -> int:
+        """Extrair contagem de árvores dos resultados."""
+        # Primeiro, verificar tree_count (contagem por segmentação)
+        if 'tree_count' in results:
+            return results['tree_count'].get('total_trees', 0)
+        # Fallback: object_detection
+        if 'object_detection' in results:
+            det = results['object_detection']
+            # Se a fonte for tree_segmentation, usar esse valor
+            if det.get('source') == 'tree_segmentation':
+                return det.get('total_detections', 0)
+            # Ou verificar se tem classe 'arvore'
+            by_class = det.get('by_class', {})
+            if 'arvore' in by_class:
+                return by_class['arvore']
+            # Último fallback: total de detecções
+            return det.get('total_detections', 0)
         return 0

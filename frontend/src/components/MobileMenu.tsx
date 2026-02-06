@@ -20,7 +20,7 @@ export function MobileMenuButton({ onClick }: { onClick: () => void }) {
   )
 }
 
-export function MobileMenuOverlay({ isOpen, onClose, children }: MobileMenuProps & { onClose: () => void }) {
+export function MobileMenuOverlay({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) {
   // Prevenir scroll do body quando o menu está aberto
   useEffect(() => {
     if (isOpen) {

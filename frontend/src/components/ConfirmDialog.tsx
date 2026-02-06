@@ -225,11 +225,11 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
       {children}
       {dialogState.options && (
         <ConfirmDialog
+          {...dialogState.options}
           isOpen={dialogState.isOpen}
           onClose={handleClose}
           onConfirm={handleConfirm}
           isLoading={dialogState.isLoading}
-          {...dialogState.options}
         />
       )}
     </ConfirmDialogContext.Provider>
