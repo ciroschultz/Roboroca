@@ -42,6 +42,10 @@ import {
   analyzeProject,
   type Analysis,
   type EnrichedData,
+  type WeatherData,
+  type SoilData,
+  type ElevationData,
+  type GeocodingData,
 } from '@/lib/api'
 
 interface ProjectData {
@@ -68,10 +72,11 @@ interface ProjectData {
 interface ProjectProfileProps {
   project: ProjectData
   onBack: () => void
+  initialTab?: 'overview' | 'map' | 'analysis' | 'report'
 }
 
-export default function ProjectProfile({ project, onBack }: ProjectProfileProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>('overview')
+export default function ProjectProfile({ project, onBack, initialTab }: ProjectProfileProps) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>(initialTab || 'overview')
   const [analyses, setAnalyses] = useState<Analysis[]>([])
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
   const [loadingAnalyses, setLoadingAnalyses] = useState(false)
@@ -252,11 +257,12 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
     { name: 'Critica', value: project.results.criticalPercentage, color: '#EF4444' },
   ] : []
 
-  const ndviTimeData = [
-    { periodo: 'Semana 1', ndvi: 0.62, ndwi: 0.35 },
-    { periodo: 'Semana 2', ndvi: 0.65, ndwi: 0.38 },
-    { periodo: 'Semana 3', ndvi: 0.68, ndwi: 0.41 },
-    { periodo: 'Semana 4', ndvi: 0.71, ndwi: 0.44 },
+  // Dados de evolução temporal (placeholder - será implementado com histórico real)
+  const vegetationTimeData = [
+    { periodo: 'Semana 1', cobertura: 62, saude: 35 },
+    { periodo: 'Semana 2', cobertura: 65, saude: 38 },
+    { periodo: 'Semana 3', cobertura: 68, saude: 41 },
+    { periodo: 'Semana 4', cobertura: 71, saude: 44 },
   ]
 
   // Helper para formatar valores de dados enriquecidos
@@ -504,11 +510,11 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <AreaChartComponent
-                data={ndviTimeData}
-                title="Evolucao dos Indices"
+                data={vegetationTimeData}
+                title="Evolução da Vegetação"
                 dataKeys={[
-                  { key: 'ndvi', name: 'NDVI', color: '#6AAF3D' },
-                  { key: 'ndwi', name: 'NDWI', color: '#3B82F6' },
+                  { key: 'cobertura', name: 'Cobertura Vegetal (%)', color: '#6AAF3D' },
+                  { key: 'saude', name: 'Índice de Saúde (%)', color: '#3B82F6' },
                 ]}
                 xAxisKey="periodo"
               />
@@ -526,48 +532,48 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
             {enrichedData && !enrichedData.coordinates?.latitude ? null : enrichedData ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {/* Clima */}
-                {enrichedData.weather && !(enrichedData.weather as any).error && (
+                {enrichedData.weather && !enrichedData.weather.error && (
                   <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <Cloud size={18} className="text-blue-400" />
                       <h4 className="text-white font-medium text-sm">Clima</h4>
                     </div>
                     <div className="space-y-2 text-sm">
-                      {(enrichedData.weather as any)?.current?.weather_description && (
-                        <p className="text-blue-300 font-medium mb-1">{(enrichedData.weather as any).current.weather_description}</p>
+                      {enrichedData.weather.current?.weather_description && (
+                        <p className="text-blue-300 font-medium mb-1">{enrichedData.weather.current.weather_description}</p>
                       )}
                       <div className="flex justify-between">
                         <span className="text-gray-500">Temperatura</span>
-                        <span className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.temperature_c)}°C</span>
+                        <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.temperature_c)}°C</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-500">Umidade</span>
-                        <span className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.relative_humidity_pct)}%</span>
+                        <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.relative_humidity_pct)}%</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-500">Precipitacao</span>
-                        <span className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.precipitation_mm)} mm</span>
+                        <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.precipitation_mm)} mm</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-500">Vento</span>
-                        <span className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.wind_speed_kmh)} km/h</span>
+                        <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.wind_speed_kmh)} km/h</span>
                       </div>
                     </div>
                   </div>
                 )}
 
                 {/* Solo */}
-                {enrichedData.soil && !(enrichedData.soil as any).error && (
+                {enrichedData.soil && !enrichedData.soil.error && (
                   <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <Layers size={18} className="text-amber-400" />
                       <h4 className="text-white font-medium text-sm">Solo</h4>
                     </div>
                     <div className="space-y-2 text-sm">
-                      {(enrichedData.soil as any)?.properties && ['phh2o', 'nitrogen', 'soc', 'clay']
-                        .filter(k => (enrichedData.soil as any).properties[k])
+                      {enrichedData.soil.properties && ['phh2o', 'nitrogen', 'soc', 'clay']
+                        .filter(k => enrichedData.soil!.properties![k])
                         .map(key => {
-                          const val = (enrichedData.soil as any).properties[key]
+                          const val = enrichedData.soil!.properties![key]
                           const firstDepth = val?.depths ? Object.values(val.depths)[0] : null
                           return (
                             <div key={key} className="flex justify-between">
@@ -577,11 +583,11 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                           )
                         })
                       }
-                      {(enrichedData.soil as any)?.interpretation && (
+                      {enrichedData.soil.interpretation && (
                         <p className="text-xs text-gray-400 mt-1">
-                          {typeof (enrichedData.soil as any).interpretation === 'object'
-                            ? Object.values((enrichedData.soil as any).interpretation).join(' | ')
-                            : String((enrichedData.soil as any).interpretation)}
+                          {typeof enrichedData.soil.interpretation === 'object'
+                            ? Object.values(enrichedData.soil.interpretation).join(' | ')
+                            : String(enrichedData.soil.interpretation)}
                         </p>
                       )}
                     </div>
@@ -589,7 +595,7 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                 )}
 
                 {/* Elevacao */}
-                {enrichedData.elevation && !(enrichedData.elevation as any).error && (
+                {enrichedData.elevation && !enrichedData.elevation.error && (
                   <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <Mountain size={18} className="text-green-400" />
@@ -598,12 +604,12 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-gray-500">Altitude</span>
-                        <span className="text-white">{formatWeatherValue((enrichedData.elevation as any)?.elevation_m)} m</span>
+                        <span className="text-white">{formatWeatherValue(enrichedData.elevation.elevation_m)} m</span>
                       </div>
-                      {(enrichedData.elevation as any)?.terrain_classification && (
+                      {enrichedData.elevation.terrain_classification && (
                         <div className="flex justify-between">
                           <span className="text-gray-500">Terreno</span>
-                          <span className="text-white">{(enrichedData.elevation as any).terrain_classification?.description || (enrichedData.elevation as any).terrain_classification?.category}</span>
+                          <span className="text-white">{enrichedData.elevation.terrain_classification.description || enrichedData.elevation.terrain_classification.category}</span>
                         </div>
                       )}
                     </div>
@@ -611,29 +617,29 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                 )}
 
                 {/* Localizacao */}
-                {enrichedData.geocoding && !(enrichedData.geocoding as any).error && (
+                {enrichedData.geocoding && !enrichedData.geocoding.error && (
                   <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <Globe size={18} className="text-purple-400" />
                       <h4 className="text-white font-medium text-sm">Localizacao</h4>
                     </div>
                     <div className="space-y-2 text-sm">
-                      {(enrichedData.geocoding as any)?.address?.city && (
+                      {enrichedData.geocoding.address?.city && (
                         <div className="flex justify-between">
                           <span className="text-gray-500">Cidade</span>
-                          <span className="text-white truncate ml-2">{(enrichedData.geocoding as any).city}</span>
+                          <span className="text-white truncate ml-2">{enrichedData.geocoding.address.city}</span>
                         </div>
                       )}
-                      {(enrichedData.geocoding as any)?.address?.state && (
+                      {enrichedData.geocoding.address?.state && (
                         <div className="flex justify-between">
                           <span className="text-gray-500">Estado</span>
-                          <span className="text-white">{(enrichedData.geocoding as any).state}</span>
+                          <span className="text-white">{enrichedData.geocoding.address.state}</span>
                         </div>
                       )}
-                      {(enrichedData.geocoding as any)?.address?.country && (
+                      {enrichedData.geocoding.address?.country && (
                         <div className="flex justify-between">
                           <span className="text-gray-500">Pais</span>
-                          <span className="text-white">{(enrichedData.geocoding as any).country}</span>
+                          <span className="text-white">{enrichedData.geocoding.address.country}</span>
                         </div>
                       )}
                     </div>
@@ -727,10 +733,10 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                     color="purple"
                   />
                 )}
-                {videoAnalysis?.results?.temporal_summary?.vegetation && (
+                {(videoAnalysis?.results?.temporal_summary as any)?.vegetation && (
                   <StatCard
                     title="Vegetacao Media (Video)"
-                    value={Number(((videoAnalysis.results.temporal_summary as any)?.vegetation as any)?.mean_percentage || 0).toFixed(1)}
+                    value={Number(((videoAnalysis?.results?.temporal_summary as any)?.vegetation as any)?.mean_percentage || 0).toFixed(1)}
                     unit="%"
                     icon={<Trees size={24} />}
                     color="green"
@@ -741,7 +747,7 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
               {/* Dados Enriquecidos */}
               {enrichedData && enrichedData.coordinates?.latitude ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {enrichedData.weather && !(enrichedData.weather as any).error && (
+                  {enrichedData.weather && !enrichedData.weather.error && (
                     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Cloud size={18} className="text-blue-400" />
@@ -750,31 +756,31 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
                           <span className="text-gray-500">Temperatura</span>
-                          <span className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.temperature_c)}C</span>
+                          <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.temperature_c)}C</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Umidade</span>
-                          <span className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.relative_humidity_pct)}%</span>
+                          <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.relative_humidity_pct)}%</span>
                         </div>
                       </div>
                     </div>
                   )}
-                  {enrichedData.geocoding && !(enrichedData.geocoding as any).error && (
+                  {enrichedData.geocoding && !enrichedData.geocoding.error && (
                     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Globe size={18} className="text-purple-400" />
                         <h4 className="text-white font-medium text-sm">Localizacao</h4>
                       </div>
-                      <p className="text-white text-sm">{(enrichedData.geocoding as any)?.display_name}</p>
+                      <p className="text-white text-sm">{enrichedData.geocoding.display_name}</p>
                     </div>
                   )}
-                  {enrichedData.elevation && !(enrichedData.elevation as any).error && (
+                  {enrichedData.elevation && !enrichedData.elevation.error && (
                     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Mountain size={18} className="text-green-400" />
                         <h4 className="text-white font-medium text-sm">Elevacao</h4>
                       </div>
-                      <p className="text-white text-2xl font-bold">{formatWeatherValue((enrichedData.elevation as any)?.elevation_m)} m</p>
+                      <p className="text-white text-2xl font-bold">{formatWeatherValue(enrichedData.elevation.elevation_m)} m</p>
                     </div>
                   )}
                 </div>
@@ -858,18 +864,71 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
             ) : analyses.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16">
                 <Cpu size={48} className="text-gray-600 mb-4" />
-                <h3 className="text-lg text-white mb-2">Sem analises ML disponiveis</h3>
-                <p className="text-gray-500 text-sm mb-4">Inicie uma analise para ver resultados de Machine Learning.</p>
+                <h3 className="text-lg text-white mb-2">Sem análises ML disponíveis</h3>
+                <p className="text-gray-500 text-sm mb-4">Inicie uma análise para ver resultados de Machine Learning.</p>
                 <button
                   onClick={handleStartAnalysis}
                   disabled={isReanalyzing}
                   className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] disabled:bg-gray-600 text-white rounded-lg transition-colors"
                 >
-                  {isReanalyzing ? 'Iniciando...' : 'Iniciar Analise'}
+                  {isReanalyzing ? 'Iniciando...' : 'Iniciar Análise'}
                 </button>
               </div>
             ) : (
               <>
+                {/* Resumo e Histórico de Análises */}
+                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6 mb-6">
+                  <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                    <BarChart3 size={18} className="text-blue-400" />
+                    Resumo das Análises
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div className="p-3 bg-gray-800/30 rounded-lg">
+                      <p className="text-xs text-gray-500">Total de Análises</p>
+                      <p className="text-lg font-bold text-white">{analyses.length}</p>
+                    </div>
+                    <div className="p-3 bg-gray-800/30 rounded-lg">
+                      <p className="text-xs text-gray-500">Última Análise</p>
+                      <p className="text-sm font-bold text-white">
+                        {analyses[0]?.created_at ? new Date(analyses[0].created_at).toLocaleDateString('pt-BR') : 'N/A'}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-gray-800/30 rounded-lg">
+                      <p className="text-xs text-gray-500">Tempo de Processamento</p>
+                      <p className="text-lg font-bold text-[#6AAF3D]">
+                        {fullAnalysis?.processing_time_seconds ? `${fullAnalysis.processing_time_seconds.toFixed(1)}s` : 'N/A'}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-gray-800/30 rounded-lg">
+                      <p className="text-xs text-gray-500">Status</p>
+                      <p className="text-lg font-bold text-green-400 flex items-center gap-1">
+                        <CheckCircle size={16} /> Concluída
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Histórico de análises */}
+                  {analyses.length > 1 && (
+                    <div className="mt-4 pt-4 border-t border-gray-700/50">
+                      <p className="text-sm text-gray-400 mb-2">Histórico de Análises:</p>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {analyses.map((a, idx) => (
+                          <div key={a.id} className="flex items-center justify-between text-sm p-2 bg-gray-800/20 rounded">
+                            <span className="text-gray-300">
+                              {a.analysis_type === 'full_report' ? 'Análise Completa' :
+                               a.analysis_type === 'video_analysis' ? 'Análise de Vídeo' :
+                               a.analysis_type === 'enriched_data' ? 'Dados Enriquecidos' : a.analysis_type}
+                            </span>
+                            <span className="text-gray-500">
+                              {a.created_at ? new Date(a.created_at).toLocaleString('pt-BR') : 'N/A'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Segmentacao */}
                 {segmentation && (
                   <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
@@ -1167,15 +1226,15 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                 </div>
 
                 <div className="bg-gray-800/50 rounded-lg p-6">
-                  <h5 className="text-white font-medium mb-3">Indices de Vegetacao</h5>
+                  <h5 className="text-white font-medium mb-3">Índices de Vegetação</h5>
                   <dl className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <dt className="text-gray-500">NDVI Medio</dt>
-                      <dd className="text-white">{project.results?.ndviMean.toFixed(2) ?? 'N/A'}</dd>
+                      <dt className="text-gray-500">Cobertura Vegetal</dt>
+                      <dd className="text-white">{project.results?.vegetationCoverage.toFixed(1) ?? 'N/A'}%</dd>
                     </div>
                     <div className="flex justify-between">
-                      <dt className="text-gray-500">NDWI Medio</dt>
-                      <dd className="text-white">{project.results?.ndwiMean.toFixed(2) ?? 'N/A'}</dd>
+                      <dt className="text-gray-500">Índice de Saúde</dt>
+                      <dd className="text-white">{project.results?.healthIndex.toFixed(1) ?? 'N/A'}%</dd>
                     </div>
                     <div className="flex justify-between">
                       <dt className="text-gray-500">Total de Árvores</dt>
@@ -1235,37 +1294,37 @@ export default function ProjectProfile({ project, onBack }: ProjectProfileProps)
                 <div className="bg-gray-800/50 rounded-lg p-6 mb-6">
                   <h5 className="text-white font-medium mb-3">Dados Ambientais</h5>
                   <dl className="space-y-2 text-sm">
-                    {enrichedData.geocoding && !(enrichedData.geocoding as any).error && (
+                    {enrichedData.geocoding && !enrichedData.geocoding.error && (
                       <div className="flex justify-between">
                         <dt className="text-gray-500">Localizacao</dt>
-                        <dd className="text-white">{(enrichedData.geocoding as any)?.display_name || `${(enrichedData.geocoding as any)?.address?.city}, ${(enrichedData.geocoding as any)?.address?.state}`}</dd>
+                        <dd className="text-white">{enrichedData.geocoding.display_name || `${enrichedData.geocoding.address?.city}, ${enrichedData.geocoding.address?.state}`}</dd>
                       </div>
                     )}
-                    {enrichedData.elevation && !(enrichedData.elevation as any).error && (
+                    {enrichedData.elevation && !enrichedData.elevation.error && (
                       <div className="flex justify-between">
                         <dt className="text-gray-500">Altitude</dt>
-                        <dd className="text-white">{formatWeatherValue((enrichedData.elevation as any)?.elevation_m)} m</dd>
+                        <dd className="text-white">{formatWeatherValue(enrichedData.elevation.elevation_m)} m</dd>
                       </div>
                     )}
-                    {enrichedData.weather && !(enrichedData.weather as any).error && (
+                    {enrichedData.weather && !enrichedData.weather.error && (
                       <>
                         <div className="flex justify-between">
                           <dt className="text-gray-500">Temperatura Atual</dt>
-                          <dd className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.temperature_c)}C</dd>
+                          <dd className="text-white">{formatWeatherValue(enrichedData.weather.current?.temperature_c)}C</dd>
                         </div>
                         <div className="flex justify-between">
                           <dt className="text-gray-500">Umidade</dt>
-                          <dd className="text-white">{formatWeatherValue((enrichedData.weather as any)?.current?.relative_humidity_pct)}%</dd>
+                          <dd className="text-white">{formatWeatherValue(enrichedData.weather.current?.relative_humidity_pct)}%</dd>
                         </div>
                       </>
                     )}
-                    {enrichedData.soil && !(enrichedData.soil as any).error && (enrichedData.soil as any)?.interpretation && (
+                    {enrichedData.soil && !enrichedData.soil.error && enrichedData.soil.interpretation && (
                       <div className="flex justify-between">
                         <dt className="text-gray-500">Classificacao do Solo</dt>
                         <dd className="text-white">
-                          {typeof (enrichedData.soil as any).interpretation === 'object'
-                            ? Object.values((enrichedData.soil as any).interpretation).join(' | ')
-                            : String((enrichedData.soil as any).interpretation)}
+                          {typeof enrichedData.soil.interpretation === 'object'
+                            ? Object.values(enrichedData.soil.interpretation).join(' | ')
+                            : String(enrichedData.soil.interpretation)}
                         </dd>
                       </div>
                     )}
