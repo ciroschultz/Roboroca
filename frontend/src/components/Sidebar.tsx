@@ -73,9 +73,8 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
       label: 'Análises',
       icon: <BarChart3 size={20} />,
       submenu: [
-        { id: 'ndvi', label: 'Índice NDVI', icon: <Leaf size={18} /> },
-        { id: 'ndwi', label: 'Índice NDWI', icon: <Droplets size={18} /> },
-        { id: 'evi', label: 'Índice EVI', icon: <Activity size={18} /> },
+        { id: 'cobertura', label: 'Cobertura Vegetal', icon: <Leaf size={18} /> },
+        { id: 'saude-indice', label: 'Índice de Saúde', icon: <Activity size={18} /> },
         { id: 'uso-solo', label: 'Uso do Solo', icon: <Mountain size={18} /> },
         { id: 'contagem', label: 'Contagem de Plantas', icon: <Trees size={18} /> },
         { id: 'saude', label: 'Saúde das Plantas', icon: <Thermometer size={18} /> },

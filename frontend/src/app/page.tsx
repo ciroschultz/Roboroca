@@ -81,6 +81,7 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [projectInitialTab, setProjectInitialTab] = useState<'overview' | 'map' | 'analysis' | 'report' | undefined>(undefined)
 
   // Carregar usuário e projetos do backend (se autenticado)
   useEffect(() => {
@@ -131,10 +132,11 @@ export default function Home() {
           // Tentar carregar resumo de análise para projetos completos ou em processamento
           // (para manter dados anteriores enquanto re-analisa)
           let results: Project['results'] = undefined
+          let summary: { analyzed_images: number; vegetation_coverage_avg: number; health_index_avg: number; total_objects_detected: number; healthy_percentage: number; stressed_percentage: number; critical_percentage: number; land_use_summary: Record<string, number>; total_area_ha: number } | null = null
 
           if (p.status === 'completed' || p.status === 'processing') {
             try {
-              const summary = await getProjectAnalysisSummary(p.id)
+              summary = await getProjectAnalysisSummary(p.id)
               if (summary.analyzed_images > 0) {
                 // Usar dados reais do backend
                 results = {
@@ -171,20 +173,12 @@ export default function Home() {
           }
 
           // Usar área do projeto (calculada das dimensões da imagem ou GPS)
-          // Prioridade: total_area_ha do projeto > area_hectares > 0
+          // Prioridade: total_area_ha do projeto > area_hectares > summary area > 0
           let projectArea = p.total_area_ha || p.area_hectares || 0
 
-          // Se projeto foi analisado ou em processamento, usar área calculada (evita chamada duplicada)
-          // A área já deve estar no projeto após primeira análise
-          if (projectArea === 0 && (p.status === 'completed' || p.status === 'processing')) {
-            try {
-              const summary = await getProjectAnalysisSummary(p.id)
-              if (summary.total_area_ha && summary.total_area_ha > 0) {
-                projectArea = summary.total_area_ha
-              }
-            } catch {
-              // Manter área do projeto
-            }
+          // Reuse summary from above to get area (avoid duplicate API call)
+          if (projectArea === 0 && summary && summary.total_area_ha > 0) {
+            projectArea = summary.total_area_ha
           }
 
           return {
@@ -296,6 +290,9 @@ export default function Home() {
     },
   ] : []
 
+  // IDs dos submenus de análise na sidebar
+  const analysisSubmenuIds = ['cobertura', 'saude-indice', 'uso-solo', 'contagem', 'saude', 'altura']
+
   const handleMenuClick = (id: string) => {
     setActiveItem(id)
     setSelectedProject(null)
@@ -306,6 +303,21 @@ export default function Home() {
     else if (id === 'projetos') setActiveView('projects')
     else if (id === 'configuracoes') setActiveView('settings')
     else if (id === 'ajuda') setActiveView('help')
+    else if (analysisSubmenuIds.includes(id)) {
+      // Navigate to most recent completed project with analysis tab
+      const recentCompleted = projects.find(p => p.status === 'completed')
+      if (recentCompleted) {
+        setSelectedProject(recentCompleted)
+        setProjectInitialTab('analysis')
+        setActiveView('project-detail')
+      } else if (projects.length > 0) {
+        setSelectedProject(projects[0])
+        setProjectInitialTab('analysis')
+        setActiveView('project-detail')
+      } else {
+        setActiveView('projects')
+      }
+    }
   }
 
   const handleUploadClick = () => {
@@ -315,6 +327,7 @@ export default function Home() {
 
   const handleProjectClick = (project: Project) => {
     setSelectedProject(project as any)
+    setProjectInitialTab(undefined)
     setActiveView('project-detail')
   }
 
@@ -371,8 +384,10 @@ export default function Home() {
       return (
         <ProjectProfile
           project={selectedProject as any}
+          initialTab={projectInitialTab}
           onBack={() => {
             setSelectedProject(null)
+            setProjectInitialTab(undefined)
             setActiveView('projects')
             setActiveItem('projetos')
           }}
