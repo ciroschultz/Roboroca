@@ -29,25 +29,255 @@ from backend.api.dependencies.auth import get_current_user
 # Importar serviços de análise
 from backend.services.image_processing import run_basic_analysis
 
+# Importar contagem de árvores (independente de YOLO/torch)
+try:
+    from backend.services.ml.tree_counter import count_trees_by_segmentation
+except ImportError:
+    count_trees_by_segmentation = None
+
+# Importar outros serviços ML (com tratamento de erro)
+try:
+    from backend.services.ml import (
+        segment_image,
+        classify_scene,
+        classify_vegetation_type,
+        extract_all_features,
+        get_detection_summary,
+        analyze_video,
+    )
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    segment_image = None
+    classify_scene = None
+    classify_vegetation_type = None
+    extract_all_features = None
+    get_detection_summary = None
+    analyze_video = None
+
 router = APIRouter(prefix="/projects")
+
+VIDEO_EXTENSIONS = {'.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv'}
+IMAGE_EXTENSIONS = {'.tif', '.tiff', '.jpg', '.jpeg', '.png', '.geotiff'}
 
 
 def is_image_file(filename: str) -> bool:
     """Verificar se é arquivo de imagem (não vídeo)."""
     ext = os.path.splitext(filename)[1].lower()
-    return ext in {'.tif', '.tiff', '.jpg', '.jpeg', '.png', '.geotiff'}
+    return ext in IMAGE_EXTENSIONS
 
 
-async def run_project_analysis(project_id: int, image_ids: list[int]):
+def is_video_file(filename: str) -> bool:
+    """Verificar se é arquivo de vídeo."""
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in VIDEO_EXTENSIONS
+
+
+async def run_image_full_analysis(image, analysis, db):
     """
-    Executar análise em background para todas as imagens de um projeto.
+    Executar análise completa (básica + ML) para uma imagem.
+
+    Cada etapa ML é protegida individualmente para que falhas
+    parciais não impeçam as outras análises.
+    """
+    start_time = time.time()
+
+    try:
+        # 1. Análise básica: vegetação (ExG) + cores + histograma
+        # Usar asyncio.to_thread para não bloquear o event loop
+        results = await asyncio.to_thread(run_basic_analysis, image.file_path)
+        processing_time = time.time() - start_time
+
+        # Compilar resultados básicos
+        analysis_results = {
+            "image_info": {
+                "filename": image.original_filename,
+                "file_size_mb": round(image.file_size / 1024 / 1024, 2) if image.file_size else None,
+                "dimensions": f"{results['image_size']['width']}x{results['image_size']['height']}",
+                "gps_coordinates": {
+                    "latitude": image.center_lat,
+                    "longitude": image.center_lon,
+                } if image.center_lat and image.center_lon else None,
+                "capture_date": image.capture_date.isoformat() if image.capture_date else None,
+            },
+            "vegetation_coverage": results['coverage'],
+            "vegetation_health": results['health'],
+            "color_analysis": results['colors'],
+            "histogram": results['histogram'],
+            "summary": {
+                "vegetation_percentage": results['coverage']['vegetation_percentage'],
+                "health_index": results['health']['health_index'],
+                "is_predominantly_green": results['colors']['is_predominantly_green'],
+                "brightness": round(results['colors']['brightness'], 1),
+            },
+        }
+
+        # 2. Análises ML adicionais (cada uma protegida individualmente)
+        ml_errors = []
+
+        if ML_AVAILABLE:
+            # 2a. Segmentação DeepLabV3
+            if segment_image is not None:
+                try:
+                    segmentation = await asyncio.to_thread(segment_image, image.file_path)
+                    analysis_results["segmentation"] = segmentation
+                except Exception as e:
+                    ml_errors.append(f"segmentation: {e}")
+
+            # 2b. Classificação de cena ResNet18
+            if classify_scene is not None:
+                try:
+                    scene = await asyncio.to_thread(classify_scene, image.file_path)
+                    analysis_results["scene_classification"] = scene
+                except Exception as e:
+                    ml_errors.append(f"scene_classification: {e}")
+
+            # 2c. Classificação de tipo de vegetação
+            if classify_vegetation_type is not None:
+                try:
+                    veg_type = await asyncio.to_thread(classify_vegetation_type, image.file_path)
+                    analysis_results["vegetation_type"] = veg_type
+                except Exception as e:
+                    ml_errors.append(f"vegetation_type: {e}")
+
+            # 2d. Extração de features (textura, cor, padrões, anomalias)
+            if extract_all_features is not None:
+                try:
+                    features = await asyncio.to_thread(extract_all_features, image.file_path)
+                    analysis_results["visual_features"] = features
+                except Exception as e:
+                    ml_errors.append(f"features: {e}")
+
+            # 2e. Detecção YOLO (mais lenta, por último)
+            if get_detection_summary is not None:
+                try:
+                    detections = await asyncio.to_thread(get_detection_summary, image.file_path)
+                    analysis_results["object_detection"] = detections
+                except Exception as e:
+                    ml_errors.append(f"object_detection: {e}")
+
+        if ml_errors:
+            analysis_results["ml_errors"] = ml_errors
+
+        # 3. Contagem de árvores por segmentação (SEMPRE executar - independente de ML)
+        if count_trees_by_segmentation is not None:
+            try:
+                tree_count = await asyncio.to_thread(count_trees_by_segmentation, image.file_path)
+                analysis_results["tree_count"] = tree_count
+
+                # Atualizar object_detection com contagem de árvores se não houver detecções YOLO
+                if "object_detection" not in analysis_results or analysis_results["object_detection"].get("total_detections", 0) == 0:
+                    # Usar contagem de árvores como principal fonte de detecções
+                    analysis_results["object_detection"] = {
+                        "total_detections": tree_count["total_trees"],
+                        "by_class": {"arvore": tree_count["total_trees"]},
+                        "avg_confidence": 0.85,  # Confiança estimada do algoritmo
+                        "detections": [],
+                        "source": "tree_segmentation",
+                        "note": "Contagem baseada em segmentação de vegetação (ExG)"
+                    }
+                else:
+                    # Adicionar contagem de árvores às detecções existentes
+                    existing = analysis_results["object_detection"]
+                    existing["tree_segmentation"] = {
+                        "total_trees": tree_count["total_trees"],
+                        "coverage_percentage": tree_count["coverage_percentage"],
+                    }
+            except Exception as e:
+                if "ml_errors" not in analysis_results:
+                    analysis_results["ml_errors"] = []
+                analysis_results["ml_errors"].append(f"tree_count: {e}")
+
+        # Remover ml_errors se estiver vazio
+        if "ml_errors" in analysis_results and not analysis_results["ml_errors"]:
+            del analysis_results["ml_errors"]
+
+        processing_time = time.time() - start_time
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = analysis_results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        # Atualizar status da imagem
+        image.status = "analyzed"
+
+        await db.commit()
+
+    except Exception as e:
+        # Marcar análise como erro
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        image.status = "error"
+        await db.commit()
+
+
+async def run_video_analysis(image, analysis, db):
+    """
+    Executar análise de vídeo usando VideoAnalyzer.
+    """
+    start_time = time.time()
+
+    try:
+        if analyze_video is None:
+            raise RuntimeError("Analisador de video nao disponivel. Verifique se OpenCV esta instalado.")
+
+        # Usar asyncio.to_thread para não bloquear o event loop
+        video_results = await asyncio.to_thread(
+            analyze_video,
+            image.file_path,
+            30,  # sample_rate
+            50   # max_frames
+        )
+
+        processing_time = time.time() - start_time
+
+        analysis_results = {
+            "image_info": {
+                "filename": image.original_filename,
+                "file_size_mb": round(image.file_size / 1024 / 1024, 2) if image.file_size else None,
+                "type": "video",
+            },
+            "video_info": video_results.get('video_info', {}),
+            "key_frames": video_results.get('key_frames', []),
+            "frames_analyzed": video_results.get('frame_count_analyzed', 0),
+            "temporal_summary": video_results.get('temporal_summary', {}),
+            "mosaic_path": video_results.get('mosaic_path'),
+        }
+
+        analysis.status = "completed"
+        analysis.results = analysis_results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        if video_results.get('mosaic_path'):
+            analysis.output_files = [video_results['mosaic_path']]
+
+        image.status = "analyzed"
+
+        await db.commit()
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        image.status = "error"
+        await db.commit()
+
+
+async def run_project_analysis(project_id: int, image_ids: list[int], video_ids: list[int] = None):
+    """
+    Executar análise em background para todas as imagens e vídeos de um projeto.
 
     Esta função é executada de forma assíncrona após o upload.
     """
+    if video_ids is None:
+        video_ids = []
+
     async with async_session_maker() as db:
         try:
+            # Processar imagens
             for image_id in image_ids:
-                # Buscar imagem
                 result = await db.execute(
                     select(Image).where(Image.id == image_id)
                 )
@@ -56,11 +286,7 @@ async def run_project_analysis(project_id: int, image_ids: list[int]):
                 if not image or not os.path.exists(image.file_path):
                     continue
 
-                # Verificar se é imagem (não vídeo)
-                if not is_image_file(image.original_filename):
-                    continue
-
-                # Verificar se já existe análise completa para esta imagem
+                # Verificar se já existe análise completa
                 existing = await db.execute(
                     select(Analysis).where(
                         Analysis.image_id == image_id,
@@ -76,60 +302,72 @@ async def run_project_analysis(project_id: int, image_ids: list[int]):
                     analysis_type="full_report",
                     status="processing",
                     image_id=image_id,
-                    config={"threshold": 0.3, "auto_triggered": True}
+                    config={"threshold": 0.3, "auto_triggered": True, "ml_enabled": ML_AVAILABLE}
                 )
                 db.add(analysis)
                 await db.commit()
                 await db.refresh(analysis)
 
-                start_time = time.time()
+                await run_image_full_analysis(image, analysis, db)
 
-                try:
-                    # Executar análise
-                    results = run_basic_analysis(image.file_path)
-                    processing_time = time.time() - start_time
+            # Processar vídeos
+            for video_id in video_ids:
+                result = await db.execute(
+                    select(Image).where(Image.id == video_id)
+                )
+                image = result.scalar_one_or_none()
 
-                    # Compilar resultados
-                    analysis_results = {
-                        "image_info": {
-                            "filename": image.original_filename,
-                            "file_size_mb": round(image.file_size / 1024 / 1024, 2) if image.file_size else None,
-                            "dimensions": f"{results['image_size']['width']}x{results['image_size']['height']}",
-                            "gps_coordinates": {
-                                "latitude": image.center_lat,
-                                "longitude": image.center_lon,
-                            } if image.center_lat and image.center_lon else None,
-                            "capture_date": image.capture_date.isoformat() if image.capture_date else None,
-                        },
-                        "vegetation_coverage": results['coverage'],
-                        "vegetation_health": results['health'],
-                        "color_analysis": results['colors'],
-                        "histogram": results['histogram'],
-                        "summary": {
-                            "vegetation_percentage": results['coverage']['vegetation_percentage'],
-                            "health_index": results['health']['health_index'],
-                            "is_predominantly_green": results['colors']['is_predominantly_green'],
-                            "brightness": round(results['colors']['brightness'], 1),
-                        },
-                    }
+                if not image or not os.path.exists(image.file_path):
+                    continue
 
-                    # Atualizar análise
-                    analysis.status = "completed"
-                    analysis.results = analysis_results
-                    analysis.processing_time_seconds = round(processing_time, 2)
-                    analysis.completed_at = datetime.now(timezone.utc)
+                # Verificar se já existe análise de vídeo completa
+                existing = await db.execute(
+                    select(Analysis).where(
+                        Analysis.image_id == video_id,
+                        Analysis.analysis_type == "video_analysis",
+                        Analysis.status == "completed"
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
 
-                    # Atualizar status da imagem
-                    image.status = "analyzed"
+                # Criar registro de análise de vídeo
+                analysis = Analysis(
+                    analysis_type="video_analysis",
+                    status="processing",
+                    image_id=video_id,
+                    config={"sample_rate": 30, "max_frames": 50, "auto_triggered": True}
+                )
+                db.add(analysis)
+                await db.commit()
+                await db.refresh(analysis)
 
-                    await db.commit()
+                await run_video_analysis(image, analysis, db)
 
-                except Exception as e:
-                    # Marcar análise como erro
-                    analysis.status = "error"
-                    analysis.error_message = str(e)
-                    image.status = "error"
-                    await db.commit()
+            # Atualizar coordenadas do projeto pelo centroide de todas as imagens com GPS
+            all_ids = image_ids + video_ids
+            if all_ids:
+                images_result = await db.execute(
+                    select(Image).where(
+                        Image.id.in_(all_ids),
+                        Image.center_lat.isnot(None),
+                        Image.center_lon.isnot(None)
+                    )
+                )
+                gps_images = images_result.scalars().all()
+
+                if gps_images:
+                    avg_lat = sum(img.center_lat for img in gps_images) / len(gps_images)
+                    avg_lon = sum(img.center_lon for img in gps_images) / len(gps_images)
+
+                    project_result = await db.execute(
+                        select(Project).where(Project.id == project_id)
+                    )
+                    project = project_result.scalar_one_or_none()
+                    if project:
+                        project.latitude = avg_lat
+                        project.longitude = avg_lon
+                        await db.commit()
 
             # Atualizar status do projeto
             project_result = await db.execute(
@@ -143,6 +381,18 @@ async def run_project_analysis(project_id: int, image_ids: list[int]):
         except Exception as e:
             # Log error (em produção usaria logging)
             print(f"Erro na análise do projeto {project_id}: {e}")
+
+            # Garantir que o projeto não fique preso em "processing"
+            try:
+                project_result = await db.execute(
+                    select(Project).where(Project.id == project_id)
+                )
+                project = project_result.scalar_one_or_none()
+                if project and project.status == "processing":
+                    project.status = "error"
+                    await db.commit()
+            except Exception:
+                pass
 
 
 @router.get("/", response_model=ProjectListResponse)
@@ -392,27 +642,54 @@ async def analyze_project(
             detail="Projeto não possui imagens para analisar"
         )
 
-    # Verificar quais imagens precisam de análise
-    images_to_analyze = []
+    # Limpar análises com erro para permitir re-análise
     for image in images:
-        # Verificar se já existe análise para esta imagem
-        existing_analysis = await db.execute(
+        error_analyses = await db.execute(
             select(Analysis).where(
                 Analysis.image_id == image.id,
-                Analysis.analysis_type == "full_report",
-                Analysis.status == "completed"
+                Analysis.status == "error"
             )
         )
-        if not existing_analysis.scalar_one_or_none():
-            # Verificar se é imagem (não vídeo)
-            if is_image_file(image.original_filename):
+        for err_analysis in error_analyses.scalars().all():
+            await db.delete(err_analysis)
+    await db.commit()
+
+    # Separar imagens e vídeos que precisam de análise
+    images_to_analyze = []
+    videos_to_analyze = []
+
+    for image in images:
+        if is_image_file(image.original_filename):
+            # Verificar se já existe análise completa
+            existing_analysis = await db.execute(
+                select(Analysis).where(
+                    Analysis.image_id == image.id,
+                    Analysis.analysis_type == "full_report",
+                    Analysis.status == "completed"
+                )
+            )
+            if not existing_analysis.scalar_one_or_none():
                 images_to_analyze.append(image.id)
-                # Marcar imagem como em processamento
                 image.status = "processing"
 
-    if not images_to_analyze:
+        elif is_video_file(image.original_filename):
+            # Verificar se já existe análise de vídeo completa
+            existing_analysis = await db.execute(
+                select(Analysis).where(
+                    Analysis.image_id == image.id,
+                    Analysis.analysis_type == "video_analysis",
+                    Analysis.status == "completed"
+                )
+            )
+            if not existing_analysis.scalar_one_or_none():
+                videos_to_analyze.append(image.id)
+                image.status = "processing"
+
+    total_to_analyze = len(images_to_analyze) + len(videos_to_analyze)
+
+    if total_to_analyze == 0:
         return {
-            "message": "Todas as imagens já foram analisadas",
+            "message": "Todas as imagens e vídeos já foram analisados",
             "analyses_started": 0,
             "project_id": project_id
         }
@@ -424,13 +701,78 @@ async def analyze_project(
     await db.commit()
 
     # Adicionar tarefa em background para executar análises
-    background_tasks.add_task(run_project_analysis, project_id, images_to_analyze)
+    background_tasks.add_task(run_project_analysis, project_id, images_to_analyze, videos_to_analyze)
 
     return {
-        "message": f"Análise iniciada para {len(images_to_analyze)} imagem(ns)",
-        "analyses_started": len(images_to_analyze),
+        "message": f"Análise iniciada para {len(images_to_analyze)} imagem(ns) e {len(videos_to_analyze)} vídeo(s)",
+        "analyses_started": total_to_analyze,
+        "images_count": len(images_to_analyze),
+        "videos_count": len(videos_to_analyze),
         "project_id": project_id
     }
+
+
+def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = None) -> float:
+    """
+    Calcular área em hectares baseada no bounding box das coordenadas GPS.
+
+    Para múltiplas imagens: usa bounding box das coordenadas GPS.
+    Para uma única imagem: estima área baseada nas dimensões da imagem
+    e um GSD (Ground Sample Distance) típico de drone.
+    """
+    import math
+
+    if not images_with_gps and not all_images:
+        return 0.0
+
+    # Se temos imagens mas sem GPS, tentar estimar pela dimensão
+    if not images_with_gps and all_images:
+        # Estimar área baseada nas dimensões da imagem
+        # Assumindo GSD típico de drone: 2-5 cm/pixel a 100m de altitude
+        total_area_ha = 0.0
+        for img in all_images:
+            if img.width and img.height:
+                # GSD estimado: 3cm/pixel (drone a ~100m de altitude)
+                gsd_m = 0.03  # 3cm em metros
+                width_m = img.width * gsd_m
+                height_m = img.height * gsd_m
+                area_m2 = width_m * height_m
+                area_ha = area_m2 / 10000  # m² para hectares
+                total_area_ha += area_ha
+        return max(round(total_area_ha, 2), 0.5)  # Mínimo 0.5 ha
+
+    lats = [img.center_lat for img in images_with_gps]
+    lons = [img.center_lon for img in images_with_gps]
+
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    # Se só tem um ponto, estimar pela dimensão da imagem
+    if min_lat == max_lat and min_lon == max_lon:
+        img = images_with_gps[0]
+        if img.width and img.height:
+            # GSD estimado: 3cm/pixel
+            gsd_m = 0.03
+            width_m = img.width * gsd_m
+            height_m = img.height * gsd_m
+            area_m2 = width_m * height_m
+            area_ha = area_m2 / 10000
+            return max(round(area_ha, 2), 0.5)
+        return 1.0
+
+    # Conversão de graus para metros (aproximação)
+    # 1 grau de latitude ≈ 111.32 km
+    # 1 grau de longitude ≈ 111.32 km * cos(latitude)
+    lat_center = (min_lat + max_lat) / 2
+    lat_distance_km = (max_lat - min_lat) * 111.32
+    lon_distance_km = (max_lon - min_lon) * 111.32 * math.cos(math.radians(lat_center))
+
+    # Área em km² convertida para hectares (1 km² = 100 ha)
+    area_km2 = lat_distance_km * lon_distance_km
+    area_ha = area_km2 * 100
+
+    # Mínimo de 1 ha para áreas muito pequenas
+    return max(round(area_ha, 2), 1.0)
 
 
 @router.get("/{project_id}/analysis-summary")
@@ -440,8 +782,18 @@ async def get_project_analysis_summary(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Obter resumo das análises de um projeto.
+    Obter resumo completo das análises de um projeto.
+
+    Retorna estatísticas agregadas incluindo:
+    - Área calculada do bounding box GPS
+    - Cobertura vegetal média
+    - Índice de saúde médio
+    - Detecções YOLO agregadas
+    - Classificação de uso do solo
+    - Tipo de vegetação dominante
     """
+    from sqlalchemy.orm import selectinload
+
     # Verificar projeto
     result = await db.execute(
         select(Project).where(
@@ -457,11 +809,24 @@ async def get_project_analysis_summary(
             detail="Projeto não encontrado"
         )
 
-    # Contar imagens
+    # Buscar todas as imagens do projeto
     images_result = await db.execute(
-        select(func.count(Image.id)).where(Image.project_id == project_id)
+        select(Image).where(Image.project_id == project_id)
     )
-    total_images = images_result.scalar() or 0
+    all_images = images_result.scalars().all()
+    total_images = len(all_images)
+
+    # Calcular área do bounding box GPS (ou estimar pelas dimensões da imagem)
+    images_with_gps = [img for img in all_images if img.center_lat and img.center_lon]
+    calculated_area_ha = calculate_bounding_box_area_ha(images_with_gps, all_images)
+
+    # Usar área do projeto se definida, senão usar calculada
+    total_area_ha = project.total_area_ha if project.total_area_ha else calculated_area_ha
+
+    # Atualizar área do projeto se não estiver definida
+    if not project.total_area_ha and calculated_area_ha > 0:
+        project.total_area_ha = calculated_area_ha
+        await db.commit()
 
     # Buscar análises completas
     analyses_result = await db.execute(
@@ -471,51 +836,273 @@ async def get_project_analysis_summary(
     )
     analyses = analyses_result.scalars().all()
 
-    # Calcular médias
+    # Inicializar agregadores
     vegetation_percentages = []
     health_indices = []
+    healthy_percentages = []
+    stressed_percentages = []
+    critical_percentages = []
     land_use_totals = {}
+    segmentation_totals = {}
+    vegetation_types = {}
+    total_objects_detected = 0
+    objects_by_class = {}
 
     for analysis in analyses:
-        if analysis.results:
-            # Cobertura de vegetação
-            if 'vegetation_coverage' in analysis.results:
-                veg = analysis.results['vegetation_coverage'].get('vegetation_percentage', 0)
-                vegetation_percentages.append(veg)
-            elif 'coverage' in analysis.results:
-                veg = analysis.results['coverage'].get('vegetation_percentage', 0)
-                vegetation_percentages.append(veg)
+        if not analysis.results:
+            continue
 
-            # Saúde
-            if 'vegetation_health' in analysis.results:
-                health = analysis.results['vegetation_health'].get('health_index', 0)
-                health_indices.append(health)
-            elif 'health' in analysis.results:
-                health = analysis.results['health'].get('health_index', 0)
-                health_indices.append(health)
+        results = analysis.results
 
-            # Uso do solo
-            if 'land_use' in analysis.results:
-                for category, value in analysis.results['land_use'].items():
+        # Cobertura de vegetação
+        if 'vegetation_coverage' in results:
+            veg = results['vegetation_coverage'].get('vegetation_percentage', 0)
+            vegetation_percentages.append(veg)
+        elif 'coverage' in results:
+            veg = results['coverage'].get('vegetation_percentage', 0)
+            vegetation_percentages.append(veg)
+
+        # Saúde da vegetação
+        # NOTA: healthy = muito saudável, moderate = saudável normal, stressed = estressada
+        # Combinamos healthy + moderate como "saudável" pois ambos indicam vegetação em bom estado
+        if 'vegetation_health' in results:
+            health_data = results['vegetation_health']
+            health_indices.append(health_data.get('health_index', 0))
+            # Saudável = healthy + moderate (vegetação em bom estado)
+            healthy_pct = health_data.get('healthy_percentage', 0) + health_data.get('moderate_percentage', 0)
+            healthy_percentages.append(healthy_pct)
+            # Estressada = stressed (vegetação com problemas)
+            stressed_percentages.append(health_data.get('stressed_percentage', 0))
+            # Crítica = non_vegetation ou valor residual
+            critical_percentages.append(health_data.get('non_vegetation_percentage', 0))
+        elif 'health' in results:
+            health_data = results['health']
+            health_indices.append(health_data.get('health_index', 0))
+            # Saudável = healthy + moderate
+            healthy_pct = health_data.get('healthy_percentage', 0) + health_data.get('moderate_percentage', 0)
+            healthy_percentages.append(healthy_pct)
+            stressed_percentages.append(health_data.get('stressed_percentage', 0))
+            critical_percentages.append(health_data.get('non_vegetation_percentage', 0))
+
+        # Uso do solo (classificação de cena)
+        if 'scene_classification' in results:
+            scene = results['scene_classification']
+            if 'land_use_percentages' in scene:
+                for category, value in scene['land_use_percentages'].items():
+                    if isinstance(value, (int, float)):
+                        if category not in land_use_totals:
+                            land_use_totals[category] = []
+                        land_use_totals[category].append(value)
+        elif 'land_use' in results:
+            for category, value in results['land_use'].items():
+                if isinstance(value, (int, float)):
                     if category not in land_use_totals:
                         land_use_totals[category] = []
                     land_use_totals[category].append(value)
 
+        # Segmentação (DeepLabV3)
+        if 'segmentation' in results:
+            seg = results['segmentation']
+            if 'category_percentages' in seg:
+                for category, value in seg['category_percentages'].items():
+                    if isinstance(value, (int, float)):
+                        if category not in segmentation_totals:
+                            segmentation_totals[category] = []
+                        segmentation_totals[category].append(value)
+
+        # Tipo de vegetação
+        if 'vegetation_type' in results:
+            veg_type = results['vegetation_type']
+            if veg_type.get('vegetation_type'):
+                vtype = veg_type['vegetation_type']
+                vegetation_types[vtype] = vegetation_types.get(vtype, 0) + 1
+
+        # Detecção de objetos (YOLO ou segmentação de árvores)
+        if 'object_detection' in results:
+            det = results['object_detection']
+            if det.get('total_detections'):
+                total_objects_detected += det['total_detections']
+            if det.get('by_class'):
+                for cls, count in det['by_class'].items():
+                    objects_by_class[cls] = objects_by_class.get(cls, 0) + count
+
+        # Contagem de árvores por segmentação (backup se YOLO não detectar)
+        if 'tree_count' in results and total_objects_detected == 0:
+            tree_data = results['tree_count']
+            if tree_data.get('total_trees'):
+                total_objects_detected += tree_data['total_trees']
+                objects_by_class['arvore'] = objects_by_class.get('arvore', 0) + tree_data['total_trees']
+
     # Calcular médias
     avg_vegetation = sum(vegetation_percentages) / len(vegetation_percentages) if vegetation_percentages else 0
     avg_health = sum(health_indices) / len(health_indices) if health_indices else 0
+    avg_healthy = sum(healthy_percentages) / len(healthy_percentages) if healthy_percentages else 0
+    avg_stressed = sum(stressed_percentages) / len(stressed_percentages) if stressed_percentages else 0
+    avg_critical = sum(critical_percentages) / len(critical_percentages) if critical_percentages else 0
+
+    # Média de uso do solo
     land_use_summary = {
-        cat: sum(vals) / len(vals) for cat, vals in land_use_totals.items()
+        cat: round(sum(vals) / len(vals), 2) for cat, vals in land_use_totals.items()
     }
+
+    # Média de segmentação
+    segmentation_summary = {
+        cat: round(sum(vals) / len(vals), 2) for cat, vals in segmentation_totals.items()
+    }
+
+    # Tipo de vegetação dominante
+    dominant_vegetation_type = max(vegetation_types, key=vegetation_types.get) if vegetation_types else None
+
+    # Número de imagens analisadas
+    analyzed_image_ids = set(a.image_id for a in analyses if a.analysis_type == 'full_report')
 
     return {
         "project_id": project_id,
         "project_name": project.name,
         "total_images": total_images,
-        "analyzed_images": len(set(a.image_id for a in analyses)),
-        "pending_images": total_images - len(set(a.image_id for a in analyses)),
+        "analyzed_images": len(analyzed_image_ids),
+        "pending_images": total_images - len(analyzed_image_ids),
+        "total_area_ha": round(total_area_ha, 2),
+
+        # Agregados de vegetação
         "vegetation_coverage_avg": round(avg_vegetation, 2),
         "health_index_avg": round(avg_health, 2),
+        "healthy_percentage": round(avg_healthy, 2),
+        "stressed_percentage": round(avg_stressed, 2),
+        "critical_percentage": round(avg_critical, 2),
+
+        # Detecções YOLO agregadas
+        "total_objects_detected": total_objects_detected,
+        "objects_by_class": objects_by_class,
+
+        # Classificação de uso do solo
         "land_use_summary": land_use_summary,
+        "segmentation_summary": segmentation_summary,
+
+        # Tipo de vegetação dominante
+        "dominant_vegetation_type": dominant_vegetation_type,
+
+        # Status do projeto
         "status": project.status
+    }
+
+
+@router.get("/{project_id}/enriched-data")
+async def get_project_enriched_data(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Buscar dados enriquecidos do projeto via APIs externas.
+
+    Busca em paralelo: clima (Open-Meteo), solo (SoilGrids),
+    elevação (Open Topo Data) e endereço (Nominatim/OSM).
+
+    Requer que o projeto tenha coordenadas GPS definidas.
+    Resultados são cacheados no banco para evitar chamadas repetidas.
+    """
+    import asyncio
+    from backend.services.external.weather import get_weather_data
+    from backend.services.external.soil import get_soil_data
+    from backend.services.external.elevation import get_elevation_data
+    from backend.services.external.geocoding import get_geocoding_data
+
+    # Verificar projeto
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Projeto não encontrado"
+        )
+
+    if not project.latitude or not project.longitude:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Projeto não possui coordenadas GPS. Faça upload de imagens com dados GPS."
+        )
+
+    lat = project.latitude
+    lon = project.longitude
+
+    # Verificar cache: buscar análise do tipo enriched_data para este projeto
+    # Usamos uma análise fictícia vinculada à primeira imagem do projeto como cache
+    from sqlalchemy.orm import selectinload
+    project_with_images = await db.execute(
+        select(Project)
+        .options(selectinload(Project.images))
+        .where(Project.id == project_id)
+    )
+    proj = project_with_images.scalar_one()
+    first_image = proj.images[0] if proj.images else None
+
+    if first_image:
+        cache_result = await db.execute(
+            select(Analysis).where(
+                Analysis.image_id == first_image.id,
+                Analysis.analysis_type == "enriched_data",
+                Analysis.status == "completed"
+            )
+        )
+        cached = cache_result.scalar_one_or_none()
+        if cached and cached.results:
+            return {
+                "project_id": project_id,
+                "cached": True,
+                "cached_at": cached.completed_at.isoformat() if cached.completed_at else None,
+                **cached.results,
+            }
+
+    # Buscar dados em paralelo
+    weather_task = get_weather_data(lat, lon)
+    soil_task = get_soil_data(lat, lon)
+    elevation_task = get_elevation_data(lat, lon)
+    geocoding_task = get_geocoding_data(lat, lon)
+
+    weather, soil, elevation, geocoding = await asyncio.gather(
+        weather_task, soil_task, elevation_task, geocoding_task,
+        return_exceptions=True
+    )
+
+    # Tratar exceções
+    if isinstance(weather, Exception):
+        weather = {"error": str(weather), "source": "Open-Meteo"}
+    if isinstance(soil, Exception):
+        soil = {"error": str(soil), "source": "SoilGrids/ISRIC"}
+    if isinstance(elevation, Exception):
+        elevation = {"error": str(elevation), "source": "Open Topo Data"}
+    if isinstance(geocoding, Exception):
+        geocoding = {"error": str(geocoding), "source": "Nominatim/OpenStreetMap"}
+
+    enriched = {
+        "coordinates": {"latitude": lat, "longitude": lon},
+        "weather": weather,
+        "soil": soil,
+        "elevation": elevation,
+        "geocoding": geocoding,
+    }
+
+    # Salvar cache no banco
+    if first_image:
+        cache_analysis = Analysis(
+            analysis_type="enriched_data",
+            status="completed",
+            image_id=first_image.id,
+            results=enriched,
+            completed_at=datetime.now(timezone.utc),
+        )
+        db.add(cache_analysis)
+        await db.commit()
+
+    return {
+        "project_id": project_id,
+        "cached": False,
+        **enriched,
     }

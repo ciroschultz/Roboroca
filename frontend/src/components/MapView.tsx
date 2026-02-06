@@ -26,6 +26,13 @@ import {
   AlertCircle,
   RefreshCw,
   Image as ImageIcon,
+  MousePointer,
+  Trash2,
+  Square,
+  Info,
+  X,
+  Save,
+  Palette,
 } from 'lucide-react'
 
 type MapMode = 'project' | 'gps'
@@ -74,8 +81,47 @@ interface AnalysisSummary {
   pending_images: number
   vegetation_coverage_avg: number
   health_index_avg: number
+  total_objects_detected?: number
   land_use_summary: Record<string, number>
   status: string
+}
+
+interface ImageAnalysis {
+  vegetation_coverage?: {
+    vegetation_percentage: number
+    soil_percentage: number
+  }
+  vegetation_health?: {
+    health_index: number
+    healthy_percentage: number
+    moderate_percentage: number
+    stressed_percentage: number
+  }
+  object_detection?: {
+    total_detections: number
+    by_class: Record<string, number>
+  }
+  vegetation_type?: {
+    vegetation_type: string
+    vegetation_density: string
+  }
+}
+
+type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser'
+
+interface Annotation {
+  id?: number
+  type: string
+  data: {
+    x?: number
+    y?: number
+    points?: number[][]
+    start?: { x: number; y: number }
+    end?: { x: number; y: number }
+    label?: string
+    color?: string
+  }
+  isNew?: boolean
 }
 
 const API_BASE = 'http://localhost:8000/api/v1'
@@ -108,6 +154,18 @@ export default function MapView() {
   const [radius, setRadius] = useState(500)
   const [satelliteSource, setSatelliteSource] = useState<'sentinel' | 'landsat'>('sentinel')
   const [areaSelected, setAreaSelected] = useState(false)
+
+  // Drawing tools states
+  const [activeTool, setActiveTool] = useState<DrawingTool>('select')
+  const [selectedColor, setSelectedColor] = useState('#FF0000')
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [currentAnnotation, setCurrentAnnotation] = useState<Annotation | null>(null)
+  const [showInfoPanel, setShowInfoPanel] = useState(true)
+  const [imageAnalysis, setImageAnalysis] = useState<ImageAnalysis | null>(null)
+  const [savingAnnotation, setSavingAnnotation] = useState(false)
+
+  // Colors for annotations
+  const annotationColors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500', '#800080']
 
   // Get auth token from localStorage
   const getAuthToken = () => {
@@ -194,6 +252,191 @@ export default function MapView() {
     } catch (err) {
       console.error('Erro ao carregar análise:', err)
       setAnalysisSummary(null)
+    }
+  }
+
+  // Fetch image analysis
+  const fetchImageAnalysis = async (imageId: number) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(`${API_BASE}/analyses/?image_id=${imageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        const fullAnalysis = data.analyses?.find((a: any) => a.analysis_type === 'full_report' && a.status === 'completed')
+        if (fullAnalysis?.results) {
+          setImageAnalysis({
+            vegetation_coverage: fullAnalysis.results.vegetation_coverage,
+            vegetation_health: fullAnalysis.results.vegetation_health,
+            object_detection: fullAnalysis.results.object_detection,
+            vegetation_type: fullAnalysis.results.vegetation_type,
+          })
+        } else {
+          setImageAnalysis(null)
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao carregar analise da imagem:', err)
+      setImageAnalysis(null)
+    }
+  }
+
+  // Fetch annotations for image
+  const fetchAnnotations = async (imageId: number) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(`${API_BASE}/annotations/?image_id=${imageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setAnnotations(data.annotations?.map((a: any) => ({
+          id: a.id,
+          type: a.annotation_type,
+          data: a.data,
+        })) || [])
+      }
+    } catch (err) {
+      console.error('Erro ao carregar anotacoes:', err)
+      setAnnotations([])
+    }
+  }
+
+  // Save annotation
+  const saveAnnotation = async (annotation: Annotation) => {
+    const token = getAuthToken()
+    if (!token || !projectImages[selectedImageIndex]) return
+
+    setSavingAnnotation(true)
+    try {
+      const response = await fetch(`${API_BASE}/annotations/`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          image_id: projectImages[selectedImageIndex].id,
+          annotation_type: annotation.type,
+          data: annotation.data,
+        }),
+      })
+
+      if (response.ok) {
+        const saved = await response.json()
+        setAnnotations(prev => [...prev.filter(a => a.isNew !== true), { id: saved.id, type: saved.annotation_type, data: saved.data }])
+        setCurrentAnnotation(null)
+      }
+    } catch (err) {
+      console.error('Erro ao salvar anotacao:', err)
+    } finally {
+      setSavingAnnotation(false)
+    }
+  }
+
+  // Delete annotation
+  const deleteAnnotation = async (annotationId: number) => {
+    const token = getAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(`${API_BASE}/annotations/${annotationId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (response.ok) {
+        setAnnotations(prev => prev.filter(a => a.id !== annotationId))
+      }
+    } catch (err) {
+      console.error('Erro ao deletar anotacao:', err)
+    }
+  }
+
+  // Handle canvas click for drawing
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (activeTool === 'select' || activeTool === 'eraser') return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    if (activeTool === 'point') {
+      const newAnnotation: Annotation = {
+        type: 'point',
+        data: { x, y, label: `Ponto ${annotations.length + 1}`, color: selectedColor },
+        isNew: true,
+      }
+      setAnnotations(prev => [...prev, newAnnotation])
+      saveAnnotation(newAnnotation)
+    } else if (activeTool === 'measurement') {
+      if (!currentAnnotation) {
+        setCurrentAnnotation({
+          type: 'measurement',
+          data: { start: { x, y }, color: selectedColor },
+          isNew: true,
+        })
+      } else if (currentAnnotation.type === 'measurement' && currentAnnotation.data.start) {
+        const start = currentAnnotation.data.start
+        const distance = Math.sqrt(Math.pow(x - start.x, 2) + Math.pow(y - start.y, 2))
+        const newAnnotation: Annotation = {
+          type: 'measurement',
+          data: {
+            start,
+            end: { x, y },
+            color: selectedColor,
+            label: `${distance.toFixed(0)}px`,
+          },
+          isNew: true,
+        }
+        setAnnotations(prev => [...prev, newAnnotation])
+        saveAnnotation(newAnnotation)
+        setCurrentAnnotation(null)
+      }
+    } else if (activeTool === 'polygon') {
+      if (!currentAnnotation) {
+        setCurrentAnnotation({
+          type: 'polygon',
+          data: { points: [[x, y]], color: selectedColor },
+          isNew: true,
+        })
+      } else if (currentAnnotation.type === 'polygon' && currentAnnotation.data.points) {
+        const points = [...currentAnnotation.data.points, [x, y]]
+        setCurrentAnnotation({
+          ...currentAnnotation,
+          data: { ...currentAnnotation.data, points },
+        })
+      }
+    }
+  }
+
+  // Handle double click to finish polygon
+  const handleCanvasDoubleClick = () => {
+    if (activeTool === 'polygon' && currentAnnotation && currentAnnotation.data.points && currentAnnotation.data.points.length >= 3) {
+      const newAnnotation: Annotation = {
+        type: 'polygon',
+        data: {
+          ...currentAnnotation.data,
+          label: `Area ${annotations.filter(a => a.type === 'polygon').length + 1}`,
+        },
+        isNew: true,
+      }
+      setAnnotations(prev => [...prev, newAnnotation])
+      saveAnnotation(newAnnotation)
+      setCurrentAnnotation(null)
     }
   }
 
@@ -318,8 +561,12 @@ export default function MapView() {
   useEffect(() => {
     if (projectImages.length > 0 && selectedImageIndex >= 0) {
       loadImage(projectImages[selectedImageIndex])
+      fetchImageAnalysis(projectImages[selectedImageIndex].id)
+      fetchAnnotations(projectImages[selectedImageIndex].id)
     } else {
       setCurrentImageUrl(null)
+      setImageAnalysis(null)
+      setAnnotations([])
     }
     // Cleanup on unmount
     return () => {
@@ -459,15 +706,75 @@ export default function MapView() {
               <div className="flex-1 relative bg-gray-900">
                 {/* Toolbar do mapa */}
                 <div className="absolute top-4 left-4 right-4 z-10 flex items-center justify-between">
-                  <button
-                    onClick={() => setSelectedProject(null)}
-                    className="px-3 py-2 bg-gray-800/90 hover:bg-gray-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    ← Voltar
-                  </button>
                   <div className="flex items-center gap-2">
-                    <button className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors" title="Medir">
-                      <Ruler size={18} />
+                    <button
+                      onClick={() => setSelectedProject(null)}
+                      className="px-3 py-2 bg-gray-800/90 hover:bg-gray-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                    >
+                      ← Voltar
+                    </button>
+
+                    {/* Toolbar de ferramentas de desenho */}
+                    <div className="flex items-center gap-1 bg-gray-800/90 rounded-lg p-1">
+                      <button
+                        onClick={() => setActiveTool('select')}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'select' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Selecionar"
+                      >
+                        <MousePointer size={18} />
+                      </button>
+                      <button
+                        onClick={() => setActiveTool('point')}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'point' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Adicionar marcador"
+                      >
+                        <MapPin size={18} />
+                      </button>
+                      <button
+                        onClick={() => setActiveTool('polygon')}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'polygon' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Desenhar poligono (duplo-clique para fechar)"
+                      >
+                        <PenTool size={18} />
+                      </button>
+                      <button
+                        onClick={() => setActiveTool('measurement')}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Medir distancia"
+                      >
+                        <Ruler size={18} />
+                      </button>
+                      <button
+                        onClick={() => setActiveTool('eraser')}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'eraser' ? 'bg-red-500 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Apagar anotacao"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+
+                      {/* Seletor de cor */}
+                      <div className="w-px h-6 bg-gray-600 mx-1" />
+                      <div className="flex items-center gap-1">
+                        {annotationColors.slice(0, 4).map(color => (
+                          <button
+                            key={color}
+                            onClick={() => setSelectedColor(color)}
+                            className={`w-6 h-6 rounded-full border-2 transition-all ${selectedColor === color ? 'border-white scale-110' : 'border-transparent'}`}
+                            style={{ backgroundColor: color }}
+                            title={`Cor: ${color}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowInfoPanel(!showInfoPanel)}
+                      className={`p-2 rounded-lg transition-colors ${showInfoPanel ? 'bg-[#6AAF3D] text-white' : 'bg-gray-800/90 text-white hover:bg-gray-700'}`}
+                      title="Painel de informacoes"
+                    >
+                      <Info size={18} />
                     </button>
                     <button className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors" title="Exportar">
                       <Download size={18} />
@@ -480,7 +787,12 @@ export default function MapView() {
 
                 {/* Exibir imagem do projeto */}
                 {projectImages.length > 0 ? (
-                  <div className="absolute inset-0">
+                  <div
+                    className="absolute inset-0"
+                    onClick={handleCanvasClick}
+                    onDoubleClick={handleCanvasDoubleClick}
+                    style={{ cursor: activeTool === 'select' ? 'default' : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
+                  >
                     {imageLoading ? (
                       <div className="flex items-center justify-center h-full">
                         <Loader2 size={48} className="text-[#6AAF3D] animate-spin" />
@@ -506,6 +818,106 @@ export default function MapView() {
                     {layers.find(l => l.type === 'heatmap')?.visible && (
                       <div className="absolute inset-0 bg-gradient-to-br from-red-500/40 via-yellow-500/30 to-green-500/20 mix-blend-overlay pointer-events-none" />
                     )}
+
+                    {/* Renderizar anotacoes */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                      {annotations.map((ann, idx) => {
+                        if (ann.type === 'point' && ann.data.x && ann.data.y) {
+                          return (
+                            <g key={ann.id || `new-${idx}`}>
+                              <circle
+                                cx={ann.data.x}
+                                cy={ann.data.y}
+                                r={8}
+                                fill={ann.data.color || '#FF0000'}
+                                stroke="white"
+                                strokeWidth={2}
+                                style={{ pointerEvents: activeTool === 'eraser' ? 'auto' : 'none', cursor: activeTool === 'eraser' ? 'pointer' : 'default' }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (activeTool === 'eraser' && ann.id) deleteAnnotation(ann.id)
+                                }}
+                              />
+                              {ann.data.label && (
+                                <text x={(ann.data.x || 0) + 12} y={(ann.data.y || 0) + 4} fill="white" fontSize={12} fontWeight="bold">
+                                  {ann.data.label}
+                                </text>
+                              )}
+                            </g>
+                          )
+                        }
+                        if (ann.type === 'measurement' && ann.data.start && ann.data.end) {
+                          return (
+                            <g key={ann.id || `new-${idx}`}>
+                              <line
+                                x1={ann.data.start.x}
+                                y1={ann.data.start.y}
+                                x2={ann.data.end.x}
+                                y2={ann.data.end.y}
+                                stroke={ann.data.color || '#0000FF'}
+                                strokeWidth={3}
+                                style={{ pointerEvents: activeTool === 'eraser' ? 'auto' : 'none', cursor: activeTool === 'eraser' ? 'pointer' : 'default' }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (activeTool === 'eraser' && ann.id) deleteAnnotation(ann.id)
+                                }}
+                              />
+                              <circle cx={ann.data.start.x} cy={ann.data.start.y} r={5} fill={ann.data.color || '#0000FF'} stroke="white" strokeWidth={2} />
+                              <circle cx={ann.data.end.x} cy={ann.data.end.y} r={5} fill={ann.data.color || '#0000FF'} stroke="white" strokeWidth={2} />
+                              {ann.data.label && (
+                                <text
+                                  x={(ann.data.start.x + ann.data.end.x) / 2}
+                                  y={(ann.data.start.y + ann.data.end.y) / 2 - 8}
+                                  fill="white"
+                                  fontSize={12}
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  {ann.data.label}
+                                </text>
+                              )}
+                            </g>
+                          )
+                        }
+                        if (ann.type === 'polygon' && ann.data.points && ann.data.points.length >= 3) {
+                          const points = ann.data.points.map(p => p.join(',')).join(' ')
+                          return (
+                            <g key={ann.id || `new-${idx}`}>
+                              <polygon
+                                points={points}
+                                fill={`${ann.data.color || '#00FF00'}40`}
+                                stroke={ann.data.color || '#00FF00'}
+                                strokeWidth={2}
+                                style={{ pointerEvents: activeTool === 'eraser' ? 'auto' : 'none', cursor: activeTool === 'eraser' ? 'pointer' : 'default' }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (activeTool === 'eraser' && ann.id) deleteAnnotation(ann.id)
+                                }}
+                              />
+                              {ann.data.label && ann.data.points[0] && (
+                                <text x={ann.data.points[0][0]} y={ann.data.points[0][1] - 8} fill="white" fontSize={12} fontWeight="bold">
+                                  {ann.data.label}
+                                </text>
+                              )}
+                            </g>
+                          )
+                        }
+                        return null
+                      })}
+                      {/* Desenho em progresso */}
+                      {currentAnnotation?.type === 'measurement' && currentAnnotation.data.start && (
+                        <circle cx={currentAnnotation.data.start.x} cy={currentAnnotation.data.start.y} r={5} fill={selectedColor} stroke="white" strokeWidth={2} />
+                      )}
+                      {currentAnnotation?.type === 'polygon' && currentAnnotation.data.points && currentAnnotation.data.points.length > 0 && (
+                        <polyline
+                          points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
+                          fill="none"
+                          stroke={selectedColor}
+                          strokeWidth={2}
+                          strokeDasharray="5,5"
+                        />
+                      )}
+                    </svg>
                   </div>
                 ) : (
                   // Placeholder se não houver imagens
@@ -573,6 +985,127 @@ export default function MapView() {
                   <div className="h-1 w-16 bg-white rounded"></div>
                   <span className="text-xs text-gray-300">100m</span>
                 </div>
+
+                {/* Painel de informacoes da imagem */}
+                {showInfoPanel && projectImages[selectedImageIndex] && (
+                  <div className="absolute top-20 right-4 w-72 bg-gray-800/95 rounded-xl border border-gray-700/50 overflow-hidden shadow-xl">
+                    <div className="flex items-center justify-between p-3 bg-gray-700/50 border-b border-gray-700/50">
+                      <h4 className="text-white font-medium text-sm">Informacoes da Imagem</h4>
+                      <button onClick={() => setShowInfoPanel(false)} className="p-1 hover:bg-gray-600 rounded">
+                        <X size={14} className="text-gray-400" />
+                      </button>
+                    </div>
+                    <div className="p-3 space-y-3 max-h-[60vh] overflow-y-auto">
+                      {/* Dados basicos da imagem */}
+                      <div className="space-y-2">
+                        <p className="text-xs text-gray-500 uppercase tracking-wider">Arquivo</p>
+                        <p className="text-white text-sm truncate">{projectImages[selectedImageIndex].original_filename}</p>
+                      </div>
+
+                      {projectImages[selectedImageIndex].width && projectImages[selectedImageIndex].height && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider">Dimensoes</p>
+                          <p className="text-white text-sm">
+                            {projectImages[selectedImageIndex].width} x {projectImages[selectedImageIndex].height} px
+                          </p>
+                        </div>
+                      )}
+
+                      {projectImages[selectedImageIndex].center_lat && projectImages[selectedImageIndex].center_lon && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider">Coordenadas GPS</p>
+                          <p className="text-white text-sm font-mono">
+                            {projectImages[selectedImageIndex].center_lat?.toFixed(6)}, {projectImages[selectedImageIndex].center_lon?.toFixed(6)}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Resultados ML da imagem */}
+                      {imageAnalysis && (
+                        <>
+                          <div className="border-t border-gray-700/50 pt-3 mt-3">
+                            <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Analise ML</p>
+                          </div>
+
+                          {imageAnalysis.vegetation_coverage && (
+                            <div className="flex items-center gap-3 p-2 bg-gray-700/30 rounded-lg">
+                              <Leaf className="text-[#6AAF3D]" size={16} />
+                              <div className="flex-1">
+                                <p className="text-xs text-gray-500">Cobertura Vegetal</p>
+                                <p className="text-white font-medium">{imageAnalysis.vegetation_coverage.vegetation_percentage.toFixed(1)}%</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {imageAnalysis.vegetation_health && (
+                            <div className="flex items-center gap-3 p-2 bg-gray-700/30 rounded-lg">
+                              <CheckCircle className={imageAnalysis.vegetation_health.health_index >= 70 ? 'text-green-400' : imageAnalysis.vegetation_health.health_index >= 40 ? 'text-yellow-400' : 'text-red-400'} size={16} />
+                              <div className="flex-1">
+                                <p className="text-xs text-gray-500">Indice de Saude</p>
+                                <p className="text-white font-medium">{imageAnalysis.vegetation_health.health_index.toFixed(1)}%</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {imageAnalysis.object_detection && imageAnalysis.object_detection.total_detections > 0 && (
+                            <div className="flex items-center gap-3 p-2 bg-gray-700/30 rounded-lg">
+                              <Trees className="text-green-400" size={16} />
+                              <div className="flex-1">
+                                <p className="text-xs text-gray-500">Árvores Detectadas</p>
+                                <p className="text-white font-medium">{imageAnalysis.object_detection.total_detections}</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {imageAnalysis.vegetation_type && (
+                            <div className="flex items-center gap-3 p-2 bg-gray-700/30 rounded-lg">
+                              <Layers className="text-purple-400" size={16} />
+                              <div className="flex-1">
+                                <p className="text-xs text-gray-500">Tipo de Vegetacao</p>
+                                <p className="text-white font-medium text-sm">{imageAnalysis.vegetation_type.vegetation_type}</p>
+                                {imageAnalysis.vegetation_type.vegetation_density && (
+                                  <p className="text-gray-400 text-xs">{imageAnalysis.vegetation_type.vegetation_density}</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {!imageAnalysis && (
+                        <div className="text-center py-4">
+                          <p className="text-gray-500 text-sm">Sem analise ML disponivel</p>
+                        </div>
+                      )}
+
+                      {/* Anotacoes */}
+                      <div className="border-t border-gray-700/50 pt-3 mt-3">
+                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">
+                          Anotacoes ({annotations.length})
+                        </p>
+                        {annotations.length === 0 ? (
+                          <p className="text-gray-500 text-xs">Nenhuma anotacao</p>
+                        ) : (
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {annotations.map((ann, idx) => (
+                              <div key={ann.id || idx} className="flex items-center justify-between p-1.5 bg-gray-700/30 rounded text-xs">
+                                <span className="text-white capitalize">{ann.type}</span>
+                                <div className="flex items-center gap-1">
+                                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: ann.data.color || '#FF0000' }} />
+                                  {ann.id && activeTool === 'eraser' && (
+                                    <button onClick={() => deleteAnnotation(ann.id!)} className="p-1 hover:bg-red-500/20 rounded">
+                                      <Trash2 size={12} className="text-red-400" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Painel lateral de camadas e informações */}

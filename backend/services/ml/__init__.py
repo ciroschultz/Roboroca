@@ -3,6 +3,12 @@ Machine Learning Services
 Módulo de ML para análise de imagens aéreas.
 """
 
+# Importar contagem de árvores (não depende de torch/YOLO)
+try:
+    from backend.services.ml.tree_counter import count_trees_by_segmentation
+except ImportError:
+    count_trees_by_segmentation = None
+
 # Importar com tratamento de erro para módulos que dependem de torch
 try:
     from backend.services.ml.detector import (
@@ -75,6 +81,7 @@ __all__ = [
     'detect_objects',
     'detect_and_count',
     'get_detection_summary',
+    'count_trees_by_segmentation',
     # Segmenter
     'LandSegmenter',
     'segment_image',

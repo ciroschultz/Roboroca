@@ -1380,11 +1380,36 @@ async def export_analysis_pdf(
     image = image_result.scalar_one_or_none()
 
     project = None
+    enriched_data = None
+    all_analyses = None
     if image:
         project_result = await db.execute(
             select(Project).where(Project.id == image.project_id)
         )
         project = project_result.scalar_one_or_none()
+
+        # Buscar todas as analises do projeto
+        all_analyses_result = await db.execute(
+            select(Analysis)
+            .where(Analysis.image.has(Image.project_id == image.project_id))
+            .where(Analysis.status == "completed")
+        )
+        all_analyses = all_analyses_result.scalars().all()
+
+        # Buscar dados enriquecidos (se existirem)
+        if project and project.latitude and project.longitude:
+            try:
+                enriched_result = await db.execute(
+                    select(Analysis)
+                    .where(Analysis.image.has(Image.project_id == project.id))
+                    .where(Analysis.analysis_type == "enriched_data")
+                    .where(Analysis.status == "completed")
+                )
+                enriched_analysis = enriched_result.scalar_one_or_none()
+                if enriched_analysis and enriched_analysis.results:
+                    enriched_data = enriched_analysis.results
+            except Exception:
+                pass  # Ignorar erros ao buscar dados enriquecidos
 
     try:
         # Gerar PDF
@@ -1392,7 +1417,9 @@ async def export_analysis_pdf(
         pdf_bytes = generator.generate(
             analysis=analysis,
             project=project,
-            image=image
+            image=image,
+            enriched_data=enriched_data,
+            all_analyses=all_analyses
         )
 
         # Preparar nome do arquivo

@@ -49,6 +49,7 @@ class Image(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     project = relationship("Project", back_populates="images")
     analyses = relationship("Analysis", back_populates="image", cascade="all, delete-orphan")
+    annotations = relationship("Annotation", back_populates="image", cascade="all, delete-orphan")
 
     # Timestamps
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

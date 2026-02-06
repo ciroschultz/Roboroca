@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 
-from backend.api.routes import health, images, projects, analysis, auth
+from backend.api.routes import health, images, projects, analysis, auth, annotations
 from backend.core.config import settings
 from backend.core.database import init_db, close_db
 
@@ -356,25 +356,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configurar CORS
+# Configurar CORS - Permitir todas origens em desenvolvimento
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-        "http://localhost:3003",
-        "http://localhost:3004",
-        "http://localhost:3005",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:3002",
-        "http://127.0.0.1:3003",
-        "http://127.0.0.1:3004",
-        "http://127.0.0.1:3005",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=["*"],  # Permitir qualquer origem em dev
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],
@@ -387,6 +372,7 @@ app.include_router(auth.router, prefix=settings.API_V1_PREFIX, tags=["Authentica
 app.include_router(projects.router, prefix=settings.API_V1_PREFIX, tags=["Projects"])
 app.include_router(images.router, prefix=settings.API_V1_PREFIX, tags=["Images"])
 app.include_router(analysis.router, prefix=settings.API_V1_PREFIX, tags=["Analysis"])
+app.include_router(annotations.router, prefix=settings.API_V1_PREFIX, tags=["Annotations"])
 
 
 @app.get("/")

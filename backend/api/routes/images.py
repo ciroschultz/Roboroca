@@ -483,6 +483,76 @@ async def get_image_metadata(
     )
 
 
+@router.get("/clusters/by-project")
+async def get_image_clusters(
+    project_id: int = Query(..., description="ID do projeto"),
+    radius_m: float = Query(50.0, ge=1.0, le=10000.0, description="Raio de agrupamento em metros"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Agrupar imagens de um projeto por proximidade GPS.
+
+    Retorna clusters de imagens que estão dentro do raio especificado.
+    Útil para identificar imagens do mesmo local/talhão.
+    """
+    from backend.services.geo.clustering import cluster_images_by_location
+
+    # Verificar que o projeto pertence ao usuário
+    project_result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        )
+    )
+    project = project_result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Projeto não encontrado"
+        )
+
+    # Buscar imagens com GPS
+    images_result = await db.execute(
+        select(Image).where(
+            Image.project_id == project_id,
+            Image.center_lat.isnot(None),
+            Image.center_lon.isnot(None)
+        )
+    )
+    images = images_result.scalars().all()
+
+    if not images:
+        return {
+            "project_id": project_id,
+            "total_images_with_gps": 0,
+            "clusters": [],
+            "radius_m": radius_m,
+        }
+
+    # Preparar dados para o clustering
+    image_data = [
+        {
+            "id": img.id,
+            "latitude": img.center_lat,
+            "longitude": img.center_lon,
+            "filename": img.original_filename,
+        }
+        for img in images
+    ]
+
+    clusters = cluster_images_by_location(image_data, radius_m=radius_m)
+
+    return {
+        "project_id": project_id,
+        "total_images_with_gps": len(images),
+        "total_clusters": len(clusters),
+        "clusters": clusters,
+        "radius_m": radius_m,
+    }
+
+
 @router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
     image_id: int,

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Search,
   Filter,
@@ -18,12 +18,13 @@ import {
   Clock,
   AlertTriangle,
 } from 'lucide-react'
+import { loadAuthToken } from '@/lib/api'
 
 interface Project {
   id: string
   name: string
   createdAt: string
-  status: 'processing' | 'completed' | 'error'
+  status: 'pending' | 'processing' | 'completed' | 'error'
   sourceType: 'drone' | 'satellite'
   imageCount: number
   area: number
@@ -34,6 +35,33 @@ interface ProjectsListProps {
   projects: Project[]
   onProjectClick: (project: Project) => void
   onUploadClick: () => void
+}
+
+function AuthenticatedThumbnail({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let revoke = ''
+    const token = loadAuthToken()
+    fetch(src, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(res => {
+        if (res.ok) return res.blob()
+        throw new Error('Falha ao carregar thumbnail')
+      })
+      .then(blob => {
+        const url = URL.createObjectURL(blob)
+        revoke = url
+        setBlobUrl(url)
+      })
+      .catch(() => setBlobUrl(null))
+
+    return () => { if (revoke) URL.revokeObjectURL(revoke) }
+  }, [src])
+
+  if (!blobUrl) return null
+  return <img src={blobUrl} alt={alt} className={className} />
 }
 
 export default function ProjectsList({ projects, onProjectClick, onUploadClick }: ProjectsListProps) {
@@ -55,14 +83,17 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
         return <Clock size={16} className="text-yellow-400 animate-spin" />
       case 'error':
         return <AlertTriangle size={16} className="text-red-400" />
+      case 'pending':
+        return <Clock size={16} className="text-blue-400" />
     }
   }
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'completed': return 'Concluído'
+      case 'completed': return 'Concluido'
       case 'processing': return 'Processando'
       case 'error': return 'Erro'
+      case 'pending': return 'Pendente'
       default: return status
     }
   }
@@ -91,8 +122,9 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
             className="px-4 py-2 bg-gray-800/50 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:border-[#6AAF3D] transition-colors"
           >
             <option value="all">Todos os status</option>
-            <option value="completed">Concluídos</option>
+            <option value="completed">Concluidos</option>
             <option value="processing">Processando</option>
+            <option value="pending">Pendentes</option>
           </select>
         </div>
 
@@ -139,7 +171,7 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
               {/* Thumbnail */}
               <div className="h-36 bg-gradient-to-br from-[#6AAF3D]/20 to-[#1B3A5C]/20 relative">
                 {project.thumbnail ? (
-                  <img src={project.thumbnail} alt="" className="w-full h-full object-cover" />
+                  <AuthenticatedThumbnail src={project.thumbnail} alt={project.name} className="w-full h-full object-cover" />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
                     {project.sourceType === 'drone' ? (
@@ -209,8 +241,10 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
                 >
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#6AAF3D]/20 to-[#1B3A5C]/20 flex items-center justify-center">
-                        {project.sourceType === 'drone' ? (
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#6AAF3D]/20 to-[#1B3A5C]/20 flex items-center justify-center overflow-hidden">
+                        {project.thumbnail ? (
+                          <AuthenticatedThumbnail src={project.thumbnail} alt={project.name} className="w-full h-full object-cover" />
+                        ) : project.sourceType === 'drone' ? (
                           <Plane size={18} className="text-gray-500" />
                         ) : (
                           <Satellite size={18} className="text-gray-500" />

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Sidebar from '@/components/Sidebar'
 import Header from '@/components/Header'
 import AuthScreen from '@/components/AuthScreen'
 import {
   getProjects,
   getImages,
+  getImageThumbnailUrl,
   loadAuthToken,
   getCurrentUser,
   logout as apiLogout,
@@ -50,14 +51,15 @@ interface Project {
   id: string
   name: string
   createdAt: string
-  status: 'processing' | 'completed' | 'error'
+  status: 'pending' | 'processing' | 'completed' | 'error'
   sourceType: 'drone' | 'satellite'
   imageCount: number
   area: number
+  thumbnail?: string
   results?: {
-    ndviMean: number
-    ndwiMean: number
-    plantCount: number
+    vegetationCoverage: number  // % de cobertura vegetal (era ndviMean)
+    healthIndex: number         // % índice de saúde (era ndwiMean)
+    plantCount: number          // Total de árvores detectadas
     healthyPercentage: number
     stressedPercentage: number
     criticalPercentage: number
@@ -118,9 +120,9 @@ export default function Home() {
     setProjects(initialProjects)
   }
 
-  const loadProjectsFromApi = async () => {
+  const loadProjectsFromApi = async (silent = false) => {
     try {
-      setIsLoading(true)
+      if (!silent) setIsLoading(true)
       const response = await getProjects(0, 100)
 
       // Converter projetos da API para o formato local
@@ -133,24 +135,20 @@ export default function Home() {
             try {
               const summary = await getProjectAnalysisSummary(p.id)
               if (summary.analyzed_images > 0) {
-                // Converter resumo para o formato esperado
-                const healthyPct = summary.health_index_avg || 0
-                const stressedPct = Math.max(0, 100 - healthyPct - 10)
-                const criticalPct = Math.min(10, 100 - healthyPct - stressedPct)
-
+                // Usar dados reais do backend
                 results = {
-                  ndviMean: summary.vegetation_coverage_avg / 100 || 0,
-                  ndwiMean: 0.35, // Placeholder - será calculado pelo backend futuramente
-                  plantCount: summary.analyzed_images * 5000, // Estimativa
-                  healthyPercentage: Math.round(healthyPct),
-                  stressedPercentage: Math.round(stressedPct),
-                  criticalPercentage: Math.round(criticalPct),
+                  vegetationCoverage: summary.vegetation_coverage_avg || 0,
+                  healthIndex: summary.health_index_avg || 0,
+                  plantCount: summary.total_objects_detected || 0,
+                  healthyPercentage: Math.round(summary.healthy_percentage || 0),
+                  stressedPercentage: Math.round(summary.stressed_percentage || 0),
+                  criticalPercentage: Math.round(summary.critical_percentage || 0),
                   landUse: Object.entries(summary.land_use_summary || {}).map(([name, value]) => ({
                     name,
                     value: Math.round(value as number),
                     color: getLandUseColor(name)
                   })),
-                  heightDistribution: [], // Placeholder
+                  heightDistribution: [], // Placeholder - não implementado ainda
                 }
               }
             } catch {
@@ -158,14 +156,44 @@ export default function Home() {
             }
           }
 
+          // Buscar thumbnail da primeira imagem do projeto
+          let thumbnail: string | undefined
+          try {
+            if (p.image_count > 0) {
+              const imagesResponse = await getImages(p.id, 0, 1)
+              if (imagesResponse.images.length > 0) {
+                thumbnail = getImageThumbnailUrl(imagesResponse.images[0].id)
+              }
+            }
+          } catch {
+            // Ignorar erro ao buscar thumbnail
+          }
+
+          // Usar área do projeto (calculada das dimensões da imagem ou GPS)
+          // Prioridade: total_area_ha do projeto > area_hectares > summary > 0
+          let projectArea = p.total_area_ha || p.area_hectares || 0
+
+          // Se projeto foi analisado, tentar pegar área do summary (pode estar mais atualizada)
+          if (p.status === 'completed') {
+            try {
+              const summary = await getProjectAnalysisSummary(p.id)
+              if (summary.total_area_ha && summary.total_area_ha > 0) {
+                projectArea = summary.total_area_ha
+              }
+            } catch {
+              // Manter área do projeto
+            }
+          }
+
           return {
             id: String(p.id),
             name: p.name,
             createdAt: new Date(p.created_at).toLocaleDateString('pt-BR'),
-            status: p.status === 'completed' ? 'completed' : p.status === 'error' ? 'error' : 'processing',
+            status: p.status === 'completed' ? 'completed' : p.status === 'error' ? 'error' : p.status === 'processing' ? 'processing' : 'pending',
             sourceType: (p as any).source_type || 'drone',
             imageCount: p.image_count || 0,
-            area: p.area_hectares || 0,
+            area: projectArea,
+            thumbnail,
             results,
           }
         })
@@ -177,7 +205,7 @@ export default function Home() {
       // Em caso de erro, mantém lista vazia
       setProjects([])
     } finally {
-      setIsLoading(false)
+      if (!silent) setIsLoading(false)
     }
   }
 
@@ -200,26 +228,37 @@ export default function Home() {
     return colors[name] || '#6AAF3D'
   }
 
+  // Ref para acessar projects no polling sem causar re-criação do interval
+  const projectsRef = useRef(projects)
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
+
   // Polling para verificar status de projetos em processamento
   useEffect(() => {
-    const processingProjects = projects.filter(p => p.status === 'processing')
-    if (processingProjects.length === 0 || !isAuthenticated) return
+    if (!isAuthenticated) return
 
     const interval = setInterval(async () => {
-      await loadProjectsFromApi()
+      const hasProcessing = projectsRef.current.some(p => p.status === 'processing')
+      if (hasProcessing) {
+        await loadProjectsFromApi(true)
+      }
     }, 10000) // Verificar a cada 10 segundos
 
     return () => clearInterval(interval)
-  }, [projects, isAuthenticated])
+  }, [isAuthenticated])
 
   // Calcula estatísticas agregadas de todos os projetos
   const completedProjects = projects.filter(p => p.status === 'completed' && p.results)
   const totalArea = completedProjects.reduce((sum, p) => sum + p.area, 0)
   const totalPlants = completedProjects.reduce((sum, p) => sum + (p.results?.plantCount || 0), 0)
-  const avgNdvi = completedProjects.length > 0
-    ? completedProjects.reduce((sum, p) => sum + (p.results?.ndviMean || 0), 0) / completedProjects.length
+  const avgVegetationCoverage = completedProjects.length > 0
+    ? completedProjects.reduce((sum, p) => sum + (p.results?.vegetationCoverage || 0), 0) / completedProjects.length
     : 0
-  const avgHealth = completedProjects.length > 0
+  const avgHealthIndex = completedProjects.length > 0
+    ? completedProjects.reduce((sum, p) => sum + (p.results?.healthIndex || 0), 0) / completedProjects.length
+    : 0
+  const avgHealthyPct = completedProjects.length > 0
     ? completedProjects.reduce((sum, p) => sum + (p.results?.healthyPercentage || 0), 0) / completedProjects.length
     : 0
 
@@ -501,31 +540,32 @@ export default function Home() {
             {/* Cards de estatísticas agregadas */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <StatCard
-                title="Área Total Analisada"
+                title="Area Total Analisada"
                 value={totalArea.toLocaleString()}
                 unit="ha"
                 icon={<MapPin size={24} />}
                 color="green"
               />
               <StatCard
-                title="Total de Plantas"
-                value={(totalPlants / 1000).toFixed(1)}
-                unit="mil"
+                title="Árvores Detectadas"
+                value={totalPlants.toLocaleString()}
+                unit="árvores"
                 icon={<Trees size={24} />}
                 color="blue"
               />
               <StatCard
-                title="NDVI Médio"
-                value={avgNdvi.toFixed(2)}
+                title="Cobertura Vegetal"
+                value={avgVegetationCoverage.toFixed(1)}
+                unit="%"
                 icon={<Leaf size={24} />}
                 color="green"
               />
               <StatCard
-                title="Saúde Média"
-                value={Math.round(avgHealth)}
+                title="Indice de Saude"
+                value={Math.round(avgHealthIndex)}
                 unit="%"
                 icon={<Thermometer size={24} />}
-                color={avgHealth >= 70 ? 'green' : avgHealth >= 50 ? 'yellow' : 'red'}
+                color={avgHealthIndex >= 70 ? 'green' : avgHealthIndex >= 50 ? 'yellow' : 'red'}
               />
             </div>
 
@@ -538,21 +578,22 @@ export default function Home() {
                 color="purple"
               />
               <StatCard
-                title="Análises Concluídas"
+                title="Analises Concluidas"
                 value={completedProjects.length}
                 icon={<TrendingUp size={24} />}
                 color="blue"
               />
               <StatCard
-                title="Área Agriculturável"
+                title="Area Agricultavel"
                 value={Math.round(aggregatedLandUse.find(l => l.name === 'Agricultura')?.value || 0)}
-                unit="ha"
+                unit="%"
                 icon={<Mountain size={24} />}
                 color="green"
               />
               <StatCard
-                title="NDWI Médio"
-                value={(completedProjects.reduce((sum, p) => sum + (p.results?.ndwiMean || 0), 0) / (completedProjects.length || 1)).toFixed(2)}
+                title="Vegetacao Saudavel"
+                value={Math.round(avgHealthyPct)}
+                unit="%"
                 icon={<Droplets size={24} />}
                 color="blue"
               />
@@ -683,16 +724,16 @@ export default function Home() {
                   />
                   <DonutChart
                     data={aggregatedHealth}
-                    title="Saúde das Plantas (Média)"
-                    centerValue={`${Math.round(avgHealth)}%`}
-                    centerLabel="saudáveis"
+                    title="Saude das Plantas (Media)"
+                    centerValue={`${Math.round(avgHealthyPct)}%`}
+                    centerLabel="saudaveis"
                   />
                   <GaugeChart
-                    value={Math.round(avgHealth)}
+                    value={Math.round(avgHealthIndex)}
                     maxValue={100}
-                    title="Índice Geral de Saúde"
-                    label="saudável"
-                    color={avgHealth >= 70 ? '#6AAF3D' : avgHealth >= 50 ? '#F59E0B' : '#EF4444'}
+                    title="Indice Geral de Saude"
+                    label="saudavel"
+                    color={avgHealthIndex >= 70 ? '#6AAF3D' : avgHealthIndex >= 50 ? '#F59E0B' : '#EF4444'}
                   />
                 </div>
 

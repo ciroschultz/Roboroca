@@ -18,14 +18,24 @@ from backend.services.image_processing.video import (
     check_opencv,
 )
 
-# Importar serviços ML
-from backend.services.ml.detector import detect_objects, get_detection_summary
-from backend.services.ml.segmenter import segment_by_color
-from backend.services.ml.classifier import classify_vegetation_type
+# Importar serviços de análise básica (sempre disponíveis)
 from backend.services.image_processing.analyzer import (
     calculate_vegetation_coverage,
     estimate_vegetation_health,
 )
+
+# Importar serviços ML opcionais (requerem PyTorch)
+try:
+    from backend.services.ml.detector import detect_objects, get_detection_summary
+    from backend.services.ml.segmenter import segment_by_color
+    from backend.services.ml.classifier import classify_vegetation_type
+    ML_FUNCTIONS_AVAILABLE = True
+except ImportError:
+    detect_objects = None
+    get_detection_summary = None
+    segment_by_color = None
+    classify_vegetation_type = None
+    ML_FUNCTIONS_AVAILABLE = False
 
 # Verificar OpenCV
 try:
@@ -164,20 +174,26 @@ class VideoAnalyzer:
                 img = img.convert('RGB')
             image_array = np.array(img)
 
-        # Análise de vegetação
+        # Análise de vegetação (sempre disponível)
         coverage = calculate_vegetation_coverage(image_array)
         health = estimate_vegetation_health(image_array)
 
-        # Segmentação por cor
-        segmentation = segment_by_color(image_array)
-
-        return {
+        result = {
             'frame_index': frame_index,
             'frame_path': frame_path,
             'vegetation_coverage': coverage,
             'vegetation_health': health,
-            'land_use': segmentation,
         }
+
+        # Segmentação por cor (opcional, requer ML)
+        if segment_by_color is not None:
+            try:
+                segmentation = segment_by_color(image_array)
+                result['land_use'] = segmentation
+            except Exception:
+                pass
+
+        return result
 
     def extract_key_frames(
         self,
