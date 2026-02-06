@@ -4,7 +4,7 @@
  */
 
 // URL base da API - pode ser configurada via variável de ambiente
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
 // Token de autenticação (será armazenado após login)
 let authToken: string | null = null

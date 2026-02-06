@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { API_BASE_URL, loadAuthToken } from '@/lib/api'
 import {
   Layers,
   ZoomIn,
@@ -135,8 +136,6 @@ interface ImageGSD {
   is_estimated: boolean
 }
 
-const API_BASE = 'http://localhost:8000/api/v1'
-
 export default function MapView() {
   const [mode, setMode] = useState<MapMode>('project')
   const [zoom, setZoom] = useState(100)
@@ -228,12 +227,7 @@ export default function MapView() {
   }
 
   // Get auth token from localStorage
-  const getAuthToken = () => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('roboroca_token')
-    }
-    return null
-  }
+  const getAuthToken = () => loadAuthToken()
 
   // Fetch projects from backend
   const fetchProjects = async () => {
@@ -247,7 +241,7 @@ export default function MapView() {
     setError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/projects/`, {
+      const response = await fetch(`${API_BASE_URL}/projects/`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -277,7 +271,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE}/images/?project_id=${projectId}`, {
+      const response = await fetch(`${API_BASE_URL}/images/?project_id=${projectId}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -299,7 +293,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE}/projects/${projectId}/analysis-summary`, {
+      const response = await fetch(`${API_BASE_URL}/projects/${projectId}/analysis-summary`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -321,7 +315,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE}/analyses/?image_id=${imageId}`, {
+      const response = await fetch(`${API_BASE_URL}/analyses/?image_id=${imageId}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -353,7 +347,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE}/annotations/?image_id=${imageId}`, {
+      const response = await fetch(`${API_BASE_URL}/annotations/?image_id=${imageId}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -379,7 +373,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE}/images/${imageId}/gsd`, {
+      const response = await fetch(`${API_BASE_URL}/images/${imageId}/gsd`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -402,7 +396,7 @@ export default function MapView() {
 
     setSavingAnnotation(true)
     try {
-      const response = await fetch(`${API_BASE}/annotations/`, {
+      const response = await fetch(`${API_BASE_URL}/annotations/`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -433,7 +427,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE}/annotations/${annotationId}`, {
+      const response = await fetch(`${API_BASE_URL}/annotations/${annotationId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -634,7 +628,7 @@ export default function MapView() {
 
     setImageLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/images/${image.id}/thumbnail`, {
+      const response = await fetch(`${API_BASE_URL}/images/${image.id}/thumbnail`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
