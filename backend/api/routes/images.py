@@ -38,24 +38,18 @@ from backend.services.image_processing import (
     get_video_metadata,
 )
 
+from backend.utils.files import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, is_image_file
+
 router = APIRouter(prefix="/images")
 
 # Extensões permitidas
-ALLOWED_IMAGE_EXTENSIONS = {".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff"}
-ALLOWED_VIDEO_EXTENSIONS = {".mov", ".mp4", ".avi", ".mkv"}
-ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 
 
 def validate_file_extension(filename: str) -> bool:
     """Validar extensão do arquivo."""
     ext = os.path.splitext(filename)[1].lower()
     return ext in ALLOWED_EXTENSIONS
-
-
-def is_image_file(filename: str) -> bool:
-    """Verificar se é arquivo de imagem."""
-    ext = os.path.splitext(filename)[1].lower()
-    return ext in ALLOWED_IMAGE_EXTENSIONS
 
 
 @router.get("/", response_model=ImageListResponse)

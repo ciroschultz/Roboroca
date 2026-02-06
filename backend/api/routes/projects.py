@@ -60,22 +60,9 @@ except ImportError:
     get_detection_summary = None
     analyze_video = None
 
+from backend.utils.files import is_image_file, is_video_file
+
 router = APIRouter(prefix="/projects")
-
-VIDEO_EXTENSIONS = {'.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv'}
-IMAGE_EXTENSIONS = {'.tif', '.tiff', '.jpg', '.jpeg', '.png', '.geotiff'}
-
-
-def is_image_file(filename: str) -> bool:
-    """Verificar se é arquivo de imagem (não vídeo)."""
-    ext = os.path.splitext(filename)[1].lower()
-    return ext in IMAGE_EXTENSIONS
-
-
-def is_video_file(filename: str) -> bool:
-    """Verificar se é arquivo de vídeo."""
-    ext = os.path.splitext(filename)[1].lower()
-    return ext in VIDEO_EXTENSIONS
 
 
 async def run_image_full_analysis(image, analysis, db):
