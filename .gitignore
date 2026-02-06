@@ -17,6 +17,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!frontend/src/lib/
 lib64/
 parts/
 sdist/
@@ -96,6 +97,7 @@ frontend/.cache/
 .Trashes
 ehthumbs.db
 Thumbs.db
+nul
 
 # -----------------
 # Docker
@@ -116,6 +118,7 @@ docker-compose.override.yml
 # -----------------
 logs/
 *.log
+server.log
 
 # -----------------
 # Database
@@ -126,9 +129,9 @@ logs/
 # -----------------
 # ML Models (grandes)
 # -----------------
-ml_models/*.pt
-ml_models/*.pth
-ml_models/*.onnx
+*.pt
+*.pth
+*.onnx
 ml_models/*.h5
 !ml_models/.gitkeep
 
