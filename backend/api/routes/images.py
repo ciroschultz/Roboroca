@@ -3,10 +3,13 @@ Images Routes
 Endpoints para upload e gerenciamento de imagens.
 """
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
@@ -192,8 +195,8 @@ async def upload_image(
             try:
                 save_thumbnail(file_path, thumb_path, size=(400, 400))
                 thumbnail_path = thumb_path
-            except Exception:
-                pass  # Ignorar erro de thumbnail
+            except Exception as e:
+                logger.warning("Failed to generate thumbnail for %s: %s", file.filename, e)
 
         elif is_video_file(file_path):
             # Processar vídeo
@@ -209,13 +212,13 @@ async def upload_image(
                 try:
                     get_video_thumbnail(file_path, thumb_path)
                     thumbnail_path = thumb_path
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as e:
+                    logger.warning("Failed to generate video thumbnail for %s: %s", file.filename, e)
+            except Exception as e:
+                logger.warning("Failed to extract video metadata for %s: %s", file.filename, e)
 
-    except Exception:
-        pass  # Continuar mesmo se falhar extração de metadados
+    except Exception as e:
+        logger.warning("Failed to extract metadata for %s: %s", file.filename, e)
 
     # Criar registro no banco
     image = Image(
@@ -339,10 +342,10 @@ async def upload_multiple_images(
                     thumb_path = os.path.join(thumbnails_dir, thumb_filename)
                     try:
                         save_thumbnail(file_path, thumb_path, size=(400, 400))
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
+                    except Exception as e:
+                        logger.warning("Failed to generate thumbnail for %s: %s", file.filename, e)
+                except Exception as e:
+                    logger.warning("Failed to extract metadata for %s: %s", file.filename, e)
 
             # Criar registro
             image = Image(
@@ -553,6 +556,52 @@ async def get_image_clusters(
     }
 
 
+@router.get("/{image_id}/gsd")
+async def get_image_gsd(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obter o GSD (Ground Sample Distance) da imagem em metros/pixel.
+
+    O GSD é calculado a partir dos metadados XMP da imagem (altitude, modelo da câmera).
+    Se não for possível calcular, retorna um valor padrão estimado.
+    """
+    from backend.api.routes.projects import get_image_gsd_from_xmp
+
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada"
+        )
+
+    # Tentar obter GSD real dos metadados XMP
+    gsd_m = None
+    if image.file_path:
+        gsd_m = get_image_gsd_from_xmp(image.file_path)
+
+    # Fallback: 3cm/pixel (drone típico a ~100m de altitude)
+    if not gsd_m:
+        gsd_m = 0.03
+
+    return {
+        "image_id": image_id,
+        "gsd_m": gsd_m,
+        "gsd_cm": gsd_m * 100,
+        "width": image.width,
+        "height": image.height,
+        "is_estimated": gsd_m == 0.03,
+    }
+
+
 @router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
     image_id: int,
@@ -577,8 +626,8 @@ async def delete_image(
     if os.path.exists(image.file_path):
         try:
             os.remove(image.file_path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to delete file %s: %s", image.file_path, e)
 
     # Remover thumbnail
     thumb_filename = f"{os.path.splitext(image.filename)[0]}_thumb.jpg"
@@ -587,8 +636,8 @@ async def delete_image(
     if os.path.exists(thumb_path):
         try:
             os.remove(thumb_path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to delete thumbnail %s: %s", thumb_path, e)
 
     await db.delete(image)
     await db.commit()

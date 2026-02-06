@@ -5,9 +5,12 @@ Endpoints para gerenciamento de projetos (fazendas/propriedades).
 
 from typing import Optional
 import asyncio
+import logging
 import os
 import time
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,8 +35,10 @@ from backend.services.image_processing import run_basic_analysis
 # Importar contagem de árvores (independente de YOLO/torch)
 try:
     from backend.services.ml.tree_counter import count_trees_by_segmentation
-except ImportError:
+    logger.info("count_trees_by_segmentation loaded: %s", count_trees_by_segmentation is not None)
+except ImportError as e:
     count_trees_by_segmentation = None
+    logger.warning("count_trees_by_segmentation failed to import: %s", e)
 
 # Importar outros serviços ML (com tratamento de erro)
 try:
@@ -379,8 +384,7 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 await db.commit()
 
         except Exception as e:
-            # Log error (em produção usaria logging)
-            print(f"Erro na análise do projeto {project_id}: {e}")
+            logger.error("Erro na análise do projeto %d: %s", project_id, e)
 
             # Garantir que o projeto não fique preso em "processing"
             try:
@@ -391,8 +395,8 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 if project and project.status == "processing":
                     project.status = "error"
                     await db.commit()
-            except Exception:
-                pass
+            except Exception as recovery_err:
+                logger.error("Failed to update project %d status after error: %s", project_id, recovery_err)
 
 
 @router.get("/", response_model=ProjectListResponse)
@@ -558,7 +562,13 @@ async def update_project(
         .options(selectinload(Project.images))
         .where(Project.id == project_id)
     )
-    project = result.scalar_one()
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Projeto não encontrado"
+        )
 
     # Retornar resposta formatada
     return {
@@ -712,13 +722,80 @@ async def analyze_project(
     }
 
 
+def get_image_gsd_from_xmp(file_path: str) -> float | None:
+    """
+    Extrair GSD (Ground Sample Distance) dos metadados XMP da imagem.
+
+    Calcula o GSD baseado na altitude relativa de voo e características
+    conhecidas de câmeras de drone.
+
+    Retorna GSD em metros/pixel ou None se não for possível calcular.
+    """
+    import re
+    import os
+
+    if not os.path.exists(file_path):
+        return None
+
+    try:
+        with open(file_path, 'rb') as f:
+            data = f.read(65536)  # Ler apenas primeiros 64KB para XMP
+
+        # Buscar altitude relativa no XMP
+        match = re.search(rb'RelativeAltitude[="\s]+([+-]?[\d.]+)', data)
+        if not match:
+            return None
+
+        altitude = float(match.group(1))
+        if altitude <= 0:
+            return None
+
+        # Câmeras conhecidas e seus parâmetros (sensor_width_mm, focal_length_mm)
+        # DJI Mavic 2 Pro (Hasselblad L1D-20c): sensor 13.2mm, focal 10.26mm
+        # DJI Mavic Air 2: sensor 6.4mm, focal 4.49mm
+        # DJI Phantom 4 Pro: sensor 13.2mm, focal 8.8mm
+        # DJI Mini 3 Pro: sensor 9.7mm, focal 6.72mm
+
+        # Valores padrão para Mavic 2 Pro (mais comum em uso profissional)
+        sensor_width_mm = 13.2
+        focal_length_mm = 10.26
+        image_width_pixels = 5472  # Resolução padrão do Mavic 2 Pro
+
+        # Tentar identificar a câmera pelo modelo no EXIF/XMP
+        model_match = re.search(rb'Model[="\s>]+([^<"]+)', data)
+        if model_match:
+            model = model_match.group(1).decode('utf-8', errors='ignore').lower()
+            if 'l1d-20c' in model or 'mavic 2' in model:
+                sensor_width_mm = 13.2
+                focal_length_mm = 10.26
+            elif 'phantom 4' in model:
+                sensor_width_mm = 13.2
+                focal_length_mm = 8.8
+            elif 'air 2' in model:
+                sensor_width_mm = 6.4
+                focal_length_mm = 4.49
+            elif 'mini' in model:
+                sensor_width_mm = 9.7
+                focal_length_mm = 6.72
+
+        # Calcular GSD: GSD = (sensor_width * altitude) / (focal_length * image_width)
+        # Converter altitude para mm
+        gsd_mm = (sensor_width_mm * altitude * 1000) / (focal_length_mm * image_width_pixels)
+        gsd_m = gsd_mm / 1000  # Converter para metros
+
+        return gsd_m
+
+    except Exception:
+        return None
+
+
 def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = None) -> float:
     """
     Calcular área em hectares baseada no bounding box das coordenadas GPS.
 
     Para múltiplas imagens: usa bounding box das coordenadas GPS.
-    Para uma única imagem: estima área baseada nas dimensões da imagem
-    e um GSD (Ground Sample Distance) típico de drone.
+    Para uma única imagem: calcula área baseada no GSD real (dos metadados XMP)
+    ou estima usando GSD típico de drone.
     """
     import math
 
@@ -727,19 +804,20 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
 
     # Se temos imagens mas sem GPS, tentar estimar pela dimensão
     if not images_with_gps and all_images:
-        # Estimar área baseada nas dimensões da imagem
-        # Assumindo GSD típico de drone: 2-5 cm/pixel a 100m de altitude
         total_area_ha = 0.0
         for img in all_images:
             if img.width and img.height:
-                # GSD estimado: 3cm/pixel (drone a ~100m de altitude)
-                gsd_m = 0.03  # 3cm em metros
+                # Tentar obter GSD real dos metadados XMP
+                gsd_m = get_image_gsd_from_xmp(img.file_path) if hasattr(img, 'file_path') else None
+                if not gsd_m:
+                    gsd_m = 0.03  # Fallback: 3cm/pixel (drone a ~100m)
+
                 width_m = img.width * gsd_m
                 height_m = img.height * gsd_m
                 area_m2 = width_m * height_m
-                area_ha = area_m2 / 10000  # m² para hectares
+                area_ha = area_m2 / 10000
                 total_area_ha += area_ha
-        return max(round(total_area_ha, 2), 0.5)  # Mínimo 0.5 ha
+        return max(round(total_area_ha, 2), 0.5)
 
     lats = [img.center_lat for img in images_with_gps]
     lons = [img.center_lon for img in images_with_gps]
@@ -747,12 +825,15 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
 
-    # Se só tem um ponto, estimar pela dimensão da imagem
+    # Se só tem um ponto, calcular pela dimensão da imagem com GSD real
     if min_lat == max_lat and min_lon == max_lon:
         img = images_with_gps[0]
         if img.width and img.height:
-            # GSD estimado: 3cm/pixel
-            gsd_m = 0.03
+            # Tentar obter GSD real dos metadados XMP
+            gsd_m = get_image_gsd_from_xmp(img.file_path) if hasattr(img, 'file_path') else None
+            if not gsd_m:
+                gsd_m = 0.03  # Fallback: 3cm/pixel
+
             width_m = img.width * gsd_m
             height_m = img.height * gsd_m
             area_m2 = width_m * height_m

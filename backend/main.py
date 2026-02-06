@@ -3,9 +3,12 @@ Roboroça - Main Application
 Ponto de entrada da API FastAPI.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+
+logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -19,19 +22,19 @@ from backend.core.database import init_db, close_db
 async def lifespan(app: FastAPI):
     """Gerencia o ciclo de vida da aplicação."""
     # Startup
-    print(f"Starting Roboroça API v{settings.VERSION}")
-    print(f"Environment: {settings.ENVIRONMENT}")
-    print(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL}")
+    logger.info("Starting Roboroça API v%s", settings.VERSION)
+    logger.info("Environment: %s", settings.ENVIRONMENT)
+    logger.info("Database: %s", settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL)
 
     # Inicializar banco de dados
     await init_db()
-    print("Database initialized")
+    logger.info("Database initialized")
 
     yield
 
     # Shutdown
     await close_db()
-    print("Shutting down Roboroça API")
+    logger.info("Shutting down Roboroça API")
 
 
 # CSS personalizado para Swagger UI com tema Roboroça
