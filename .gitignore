@@ -144,6 +144,11 @@ data/processed/
 !data/.gitkeep
 
 # -----------------
+# Pastas de teste / assets de teste
+# -----------------
+Imagens e videos para testes/
+
+# -----------------
 # Imagens de teste grandes
 # -----------------
 *.tif
