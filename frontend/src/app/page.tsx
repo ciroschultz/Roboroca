@@ -128,10 +128,11 @@ export default function Home() {
       // Converter projetos da API para o formato local
       const apiProjects: Project[] = await Promise.all(
         response.projects.map(async (p: ApiProject) => {
-          // Tentar carregar resumo de análise para projetos completos
+          // Tentar carregar resumo de análise para projetos completos ou em processamento
+          // (para manter dados anteriores enquanto re-analisa)
           let results: Project['results'] = undefined
 
-          if (p.status === 'completed') {
+          if (p.status === 'completed' || p.status === 'processing') {
             try {
               const summary = await getProjectAnalysisSummary(p.id)
               if (summary.analyzed_images > 0) {
@@ -170,11 +171,12 @@ export default function Home() {
           }
 
           // Usar área do projeto (calculada das dimensões da imagem ou GPS)
-          // Prioridade: total_area_ha do projeto > area_hectares > summary > 0
+          // Prioridade: total_area_ha do projeto > area_hectares > 0
           let projectArea = p.total_area_ha || p.area_hectares || 0
 
-          // Se projeto foi analisado, tentar pegar área do summary (pode estar mais atualizada)
-          if (p.status === 'completed') {
+          // Se projeto foi analisado ou em processamento, usar área calculada (evita chamada duplicada)
+          // A área já deve estar no projeto após primeira análise
+          if (projectArea === 0 && (p.status === 'completed' || p.status === 'processing')) {
             try {
               const summary = await getProjectAnalysisSummary(p.id)
               if (summary.total_area_ha && summary.total_area_ha > 0) {

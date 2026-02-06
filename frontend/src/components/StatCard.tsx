@@ -17,10 +17,14 @@ interface StatCardProps {
   delay?: number
 }
 
-// Hook para animar números
+// Hook para animar números (preserva decimais)
 function useCountUp(end: number, duration: number = 1000, delay: number = 0) {
   const [count, setCount] = useState(0)
   const [hasStarted, setHasStarted] = useState(false)
+
+  // Determinar se o valor final tem decimais
+  const hasDecimals = end % 1 !== 0
+  const decimalPlaces = hasDecimals ? 1 : 0
 
   useEffect(() => {
     const delayTimer = setTimeout(() => {
@@ -42,7 +46,12 @@ function useCountUp(end: number, duration: number = 1000, delay: number = 0) {
 
       // Easing function (ease-out)
       const easeOut = 1 - Math.pow(1 - progress, 3)
-      setCount(Math.floor(easeOut * end))
+      // Preservar decimais: usar arredondamento apropriado
+      const newValue = hasDecimals
+        ? Math.round(easeOut * end * 10) / 10  // 1 casa decimal
+        : Math.floor(easeOut * end)             // Sem decimais
+
+      setCount(newValue)
 
       if (progress < 1) {
         animationFrame = requestAnimationFrame(animate)
@@ -52,7 +61,7 @@ function useCountUp(end: number, duration: number = 1000, delay: number = 0) {
     animationFrame = requestAnimationFrame(animate)
 
     return () => cancelAnimationFrame(animationFrame)
-  }, [end, duration, hasStarted])
+  }, [end, duration, hasStarted, hasDecimals])
 
   return count
 }
