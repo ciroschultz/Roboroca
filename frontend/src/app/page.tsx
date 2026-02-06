@@ -543,14 +543,14 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <StatCard
                 title="Area Total Analisada"
-                value={totalArea.toLocaleString()}
+                value={totalArea}
                 unit="ha"
                 icon={<MapPin size={24} />}
                 color="green"
               />
               <StatCard
                 title="Árvores Detectadas"
-                value={totalPlants.toLocaleString()}
+                value={totalPlants}
                 unit="árvores"
                 icon={<Trees size={24} />}
                 color="blue"
