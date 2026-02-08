@@ -884,13 +884,22 @@ export default function MapView() {
                 {/* Exibir imagem do projeto */}
                 {projectImages.length > 0 ? (
                   <div
-                    className="absolute inset-0"
+                    className="absolute inset-0 overflow-auto"
                     onClick={handleCanvasClick}
                     onDoubleClick={handleCanvasDoubleClick}
                     style={{ cursor: activeTool === 'select' ? 'default' : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
                   >
+                    <div
+                      className="relative min-w-full min-h-full"
+                      style={{
+                        transform: `scale(${zoom / 100})`,
+                        transformOrigin: 'center center',
+                        width: zoom > 100 ? `${zoom}%` : '100%',
+                        height: zoom > 100 ? `${zoom}%` : '100%',
+                      }}
+                    >
                     {imageLoading ? (
-                      <div className="flex items-center justify-center h-full">
+                      <div className="flex items-center justify-center h-full" style={{ minHeight: '100vh' }}>
                         <Loader2 size={48} className="text-[#6AAF3D] animate-spin" />
                       </div>
                     ) : currentImageUrl ? (
@@ -900,7 +909,7 @@ export default function MapView() {
                         className="w-full h-full object-contain bg-black"
                       />
                     ) : (
-                      <div className="flex items-center justify-center h-full">
+                      <div className="flex items-center justify-center h-full" style={{ minHeight: '100vh' }}>
                         <div className="text-center">
                           <AlertCircle size={48} className="text-gray-600 mx-auto mb-4" />
                           <p className="text-gray-400">Erro ao carregar imagem</p>
@@ -1044,6 +1053,7 @@ export default function MapView() {
                         />
                       )}
                     </svg>
+                    </div>{/* end zoomable wrapper */}
                   </div>
                 ) : (
                   // Placeholder se não houver imagens
@@ -1496,10 +1506,19 @@ export default function MapView() {
 
                 {/* Controles de zoom */}
                 <div className="absolute right-4 bottom-20 flex flex-col gap-2">
-                  <button className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors">
+                  <button
+                    onClick={() => setZoom(prev => Math.min(prev + 10, 200))}
+                    className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                  >
                     <ZoomIn size={18} />
                   </button>
-                  <button className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors">
+                  <div className="px-2 py-1 bg-gray-800/90 text-white text-xs text-center rounded-lg">
+                    {zoom}%
+                  </div>
+                  <button
+                    onClick={() => setZoom(prev => Math.max(prev - 10, 10))}
+                    className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                  >
                     <ZoomOut size={18} />
                   </button>
                 </div>
