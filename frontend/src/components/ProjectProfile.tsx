@@ -850,7 +850,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
               </div>
 
               {/* Dados Enriquecidos */}
-              {enrichedData && enrichedData.coordinates?.latitude ? (
+              {enrichedData && enrichedData.coordinates ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {enrichedData.weather && !enrichedData.weather.error && (
                     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
