@@ -87,11 +87,15 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
 
   // Buscar análises do projeto ao montar
   useEffect(() => {
-    if (project.status === 'completed') {
+    if (project.status === 'completed' || project.status === 'processing') {
       fetchAnalyses()
-      fetchEnrichedData()
     }
   }, [project.id, project.status])
+
+  // Buscar dados enriquecidos independente do status (só precisa de GPS no backend)
+  useEffect(() => {
+    fetchEnrichedData()
+  }, [project.id])
 
   const fetchAnalyses = async () => {
     setLoadingAnalyses(true)
@@ -370,10 +374,111 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
             </p>
             <button
               onClick={handleStartAnalysis}
-              className="px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium text-lg"
+              className="px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium text-lg mb-8"
             >
               Iniciar Analise
             </button>
+
+            {/* Dados ambientais mesmo em projetos pendentes */}
+            {enrichedData && enrichedData.coordinates ? (
+              <div className="w-full max-w-4xl">
+                <h4 className="text-white font-medium text-sm mb-3 text-center">Dados Ambientais do Local</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {enrichedData.weather && !enrichedData.weather.error && (
+                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Cloud size={18} className="text-blue-400" />
+                        <h4 className="text-white font-medium text-sm">Clima</h4>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        {enrichedData.weather.current?.weather_description && (
+                          <p className="text-blue-300 font-medium mb-1">{enrichedData.weather.current.weather_description}</p>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Temperatura</span>
+                          <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.temperature_c)}°C</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Umidade</span>
+                          <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.relative_humidity_pct)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {enrichedData.soil && !enrichedData.soil.error && (
+                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Layers size={18} className="text-amber-400" />
+                        <h4 className="text-white font-medium text-sm">Solo</h4>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        {enrichedData.soil.properties && ['phh2o', 'nitrogen', 'soc', 'clay']
+                          .filter(k => enrichedData.soil!.properties![k])
+                          .slice(0, 3)
+                          .map(key => {
+                            const val = enrichedData.soil!.properties![key]
+                            const firstDepth = val?.depths ? Object.values(val.depths)[0] : null
+                            return (
+                              <div key={key} className="flex justify-between">
+                                <span className="text-gray-500 truncate mr-2">{val?.label || key}</span>
+                                <span className="text-white">{firstDepth != null ? firstDepth : '-'} {val?.unit || ''}</span>
+                              </div>
+                            )
+                          })
+                        }
+                      </div>
+                    </div>
+                  )}
+                  {enrichedData.elevation && !enrichedData.elevation.error && (
+                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Mountain size={18} className="text-green-400" />
+                        <h4 className="text-white font-medium text-sm">Elevacao</h4>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Altitude</span>
+                          <span className="text-white">{formatWeatherValue(enrichedData.elevation.elevation_m)} m</span>
+                        </div>
+                        {enrichedData.elevation.terrain_classification && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Terreno</span>
+                            <span className="text-white">{enrichedData.elevation.terrain_classification.description || enrichedData.elevation.terrain_classification.category}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {enrichedData.geocoding && !enrichedData.geocoding.error && (
+                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Globe size={18} className="text-purple-400" />
+                        <h4 className="text-white font-medium text-sm">Localizacao</h4>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        {enrichedData.geocoding.address?.city && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Cidade</span>
+                            <span className="text-white truncate ml-2">{enrichedData.geocoding.address.city}</span>
+                          </div>
+                        )}
+                        {enrichedData.geocoding.address?.state && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Estado</span>
+                            <span className="text-white">{enrichedData.geocoding.address.state}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : loadingEnriched ? (
+              <div className="flex items-center gap-2 text-gray-500 text-sm">
+                <Loader2 size={14} className="animate-spin" />
+                Carregando dados ambientais...
+              </div>
+            ) : null}
           </div>
         ) : project.status === 'processing' ? (
           <div className="flex flex-col items-center justify-center py-16">
@@ -529,7 +634,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
             </div>
 
             {/* Dados Enriquecidos */}
-            {enrichedData && !enrichedData.coordinates?.latitude ? null : enrichedData ? (
+            {enrichedData && enrichedData.coordinates ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {/* Clima */}
                 {enrichedData.weather && !enrichedData.weather.error && (
