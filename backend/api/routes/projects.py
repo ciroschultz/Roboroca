@@ -1117,9 +1117,9 @@ async def get_project_enriched_data(
                 Analysis.image_id == first_image.id,
                 Analysis.analysis_type == "enriched_data",
                 Analysis.status == "completed"
-            )
+            ).order_by(Analysis.completed_at.desc())
         )
-        cached = cache_result.scalar_one_or_none()
+        cached = cache_result.scalars().first()
         if cached and cached.results:
             return {
                 "project_id": project_id,
