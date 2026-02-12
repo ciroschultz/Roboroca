@@ -73,13 +73,44 @@ interface ProjectProfileProps {
   project: ProjectData
   onBack: () => void
   initialTab?: 'overview' | 'map' | 'analysis' | 'report'
+  analysisSection?: string
 }
 
-export default function ProjectProfile({ project, onBack, initialTab }: ProjectProfileProps) {
+// Mapa de submenu ID → section element ID
+const sectionMap: Record<string, string> = {
+  'cobertura': 'section-segmentation',
+  'saude-indice': 'section-visual-features',
+  'uso-solo': 'section-scene-classification',
+  'contagem': 'section-object-detection',
+  'saude': 'section-vegetation-type',
+  'altura': 'section-summary',
+}
+
+export default function ProjectProfile({ project, onBack, initialTab, analysisSection }: ProjectProfileProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>(initialTab || 'overview')
   const [analyses, setAnalyses] = useState<Analysis[]>([])
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
   const [loadingAnalyses, setLoadingAnalyses] = useState(false)
+
+  // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab)
+    }
+  }, [initialTab])
+
+  // Scroll para seção específica quando analysisSection muda
+  useEffect(() => {
+    if (analysisSection && activeTab === 'analysis') {
+      const sectionId = sectionMap[analysisSection]
+      if (sectionId) {
+        // Pequeno delay para garantir que o DOM renderizou
+        setTimeout(() => {
+          document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 100)
+      }
+    }
+  }, [analysisSection, activeTab])
   const [loadingEnriched, setLoadingEnriched] = useState(false)
   const [isExportingPdf, setIsExportingPdf] = useState(false)
   const [isReanalyzing, setIsReanalyzing] = useState(false)
@@ -982,7 +1013,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
             ) : (
               <>
                 {/* Resumo e Histórico de Análises */}
-                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6 mb-6">
+                <div id="section-summary" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                     <BarChart3 size={18} className="text-blue-400" />
                     Resumo das Análises
@@ -1036,7 +1067,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
 
                 {/* Segmentacao */}
                 {segmentation && (
-                  <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                  <div id="section-segmentation" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
                     <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                       <Layers size={18} className="text-purple-400" />
                       Segmentacao (DeepLabV3)
@@ -1060,7 +1091,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
 
                 {/* Classificacao de Cena */}
                 {sceneClassification && (
-                  <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                  <div id="section-scene-classification" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
                     <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                       <Eye size={18} className="text-blue-400" />
                       Classificacao de Cena (ResNet18)
@@ -1086,7 +1117,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
 
                 {/* Tipo de Vegetacao */}
                 {vegetationType && (
-                  <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                  <div id="section-vegetation-type" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
                     <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                       <Trees size={18} className="text-green-400" />
                       Classificacao de Vegetacao
@@ -1116,7 +1147,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
 
                 {/* Deteccao de Arvores */}
                 {objectDetection && (
-                  <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                  <div id="section-object-detection" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
                     <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                       <Trees size={18} className="text-green-400" />
                       Detecção de Árvores
@@ -1153,7 +1184,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
 
                 {/* Features Visuais */}
                 {visualFeatures && (
-                  <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                  <div id="section-visual-features" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
                     <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                       <BarChart3 size={18} className="text-yellow-400" />
                       Caracteristicas Visuais
@@ -1266,7 +1297,7 @@ export default function ProjectProfile({ project, onBack, initialTab }: ProjectP
           </div>
         ) : activeTab === 'map' ? (
           <div className="h-[calc(100vh-250px)]">
-            <MapView />
+            <MapView projectId={Number(project.id)} />
           </div>
         ) : activeTab === 'report' ? (
           <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">

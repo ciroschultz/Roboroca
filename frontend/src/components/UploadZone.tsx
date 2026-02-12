@@ -13,6 +13,43 @@ import {
 
 type SourceType = 'drone' | 'satellite' | null
 
+// Validação de upload
+const MAX_IMAGE_SIZE = 50 * 1024 * 1024   // 50MB
+const MAX_VIDEO_SIZE = 500 * 1024 * 1024  // 500MB
+const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.geotiff']
+const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv']
+const ALLOWED_EXTENSIONS = [...ALLOWED_IMAGE_EXTENSIONS, ...ALLOWED_VIDEO_EXTENSIONS]
+
+function getFileExtension(filename: string): string {
+  return filename.slice(filename.lastIndexOf('.')).toLowerCase()
+}
+
+function isVideoExtension(ext: string): boolean {
+  return ALLOWED_VIDEO_EXTENSIONS.includes(ext)
+}
+
+function validateFile(file: File): string | null {
+  const ext = getFileExtension(file.name)
+
+  // Validar formato
+  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    return `Formato "${ext}" não suportado. Use: ${ALLOWED_EXTENSIONS.join(', ')}`
+  }
+
+  // Validar tamanho
+  if (isVideoExtension(ext)) {
+    if (file.size > MAX_VIDEO_SIZE) {
+      return `Vídeo muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo: 500MB`
+    }
+  } else {
+    if (file.size > MAX_IMAGE_SIZE) {
+      return `Imagem muito grande (${(file.size / 1024 / 1024).toFixed(1)}MB). Máximo: 50MB`
+    }
+  }
+
+  return null
+}
+
 interface UploadedFile {
   id: string
   name: string
@@ -58,19 +95,37 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
   }, [])
 
   const processFiles = useCallback((fileList: FileList) => {
-    const newFiles: UploadedFile[] = Array.from(fileList).map((file) => ({
-      id: Math.random().toString(36).substr(2, 9),
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      status: 'pending' as const,
-      progress: 0,
-      preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
-      file,
-    }))
+    const newFiles: UploadedFile[] = []
+    const errors: string[] = []
 
-    setFiles((prev) => [...prev, ...newFiles])
-    setUploadError(null)
+    Array.from(fileList).forEach((file) => {
+      const validationError = validateFile(file)
+      if (validationError) {
+        errors.push(`${file.name}: ${validationError}`)
+        return
+      }
+
+      newFiles.push({
+        id: Math.random().toString(36).substr(2, 9),
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        status: 'pending' as const,
+        progress: 0,
+        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+        file,
+      })
+    })
+
+    if (errors.length > 0) {
+      setUploadError(errors.join('\n'))
+    } else {
+      setUploadError(null)
+    }
+
+    if (newFiles.length > 0) {
+      setFiles((prev) => [...prev, ...newFiles])
+    }
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -319,7 +374,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
             type="file"
             id="file-upload"
             multiple
-            accept="image/*,video/*,.tif,.tiff,.geotiff"
+            accept=".jpg,.jpeg,.png,.tif,.tiff,.geotiff,.mp4,.mov,.avi,.mkv"
             onChange={handleFileSelect}
             disabled={isProcessing}
             className="hidden"
@@ -335,10 +390,10 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
                   <span className="text-[#6AAF3D] underline">clique para selecionar</span>
                 </p>
                 <p className="text-gray-500 text-sm mt-2">
-                  Formatos suportados: JPEG, PNG, TIFF, GeoTIFF, MP4, MOV
+                  Formatos suportados: JPEG, PNG, TIFF, GeoTIFF, MP4, MOV, AVI, MKV
                 </p>
                 <p className="text-gray-600 text-xs mt-1">
-                  Tamanho máximo: 500MB por arquivo
+                  Imagens: máx. 50MB | Vídeos: máx. 500MB
                 </p>
               </div>
             </div>

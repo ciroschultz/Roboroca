@@ -698,23 +698,133 @@ def generate_recommendations(results: dict) -> list:
 
 # Endpoints mantidos como placeholder para futuras implementações
 
-@router.post("/ndvi/{image_id}")
+@router.post("/ndvi/{image_id}", response_model=AnalysisResponse)
 async def calculate_ndvi(
     image_id: int,
+    threshold: float = Query(0.3, ge=0, le=1, description="Limiar para detecção de vegetação"),
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Calcular NDVI (Normalized Difference Vegetation Index).
+    Calcular índice de vegetação pseudo-NDVI usando ExG (Excess Green Index).
 
-    NOTA: Requer imagem com bandas RED e NIR (multiespectral).
-    Imagens RGB comuns não suportam NDVI.
+    Como imagens RGB não possuem banda NIR, utiliza o ExG como proxy:
+    ExG = 2G - R - B (normalizado)
 
-    Use o endpoint /vegetation para análise com imagens RGB.
+    Retorna:
+    - Mapa de índice verde (média, desvio padrão)
+    - Classificação de vegetação
+    - Percentuais por faixa de intensidade
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="NDVI requer imagens multiespectrais (NIR). Use /analysis/vegetation para imagens RGB.",
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise NDVI disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="ndvi_proxy",
+        status="processing",
+        image_id=image_id,
+        config={"threshold": threshold}
     )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Carregar imagem
+        with PILImage.open(image.file_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # Redimensionar se muito grande
+            max_size = 2000
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, PILImage.Resampling.LANCZOS)
+
+            image_array = np.array(img, dtype=np.float32) / 255.0
+
+        r, g, b = image_array[:, :, 0], image_array[:, :, 1], image_array[:, :, 2]
+
+        # Calcular ExG (Excess Green Index) como proxy NDVI
+        total = r + g + b + 1e-10
+        exg = (2.0 * g - r - b) / total
+        # Normalizar de [-1, 1] para [0, 1]
+        exg_norm = (exg + 1.0) / 2.0
+
+        # Estatísticas
+        mean_exg = float(np.mean(exg_norm))
+        std_exg = float(np.std(exg_norm))
+        min_exg = float(np.min(exg_norm))
+        max_exg = float(np.max(exg_norm))
+
+        # Classificação por faixas de intensidade
+        total_pixels = exg_norm.size
+        very_low = float(np.sum(exg_norm < 0.3) / total_pixels * 100)
+        low = float(np.sum((exg_norm >= 0.3) & (exg_norm < 0.45)) / total_pixels * 100)
+        moderate = float(np.sum((exg_norm >= 0.45) & (exg_norm < 0.55)) / total_pixels * 100)
+        high = float(np.sum((exg_norm >= 0.55) & (exg_norm < 0.65)) / total_pixels * 100)
+        very_high = float(np.sum(exg_norm >= 0.65) / total_pixels * 100)
+
+        # Classificação geral
+        if mean_exg >= 0.6:
+            classification = "vegetação densa"
+        elif mean_exg >= 0.5:
+            classification = "vegetação moderada"
+        elif mean_exg >= 0.4:
+            classification = "vegetação esparsa"
+        else:
+            classification = "pouca vegetação"
+
+        processing_time = time.time() - start_time
+
+        results = {
+            "method": "ExG (Excess Green Index) - proxy RGB para NDVI",
+            "statistics": {
+                "mean": round(mean_exg, 4),
+                "std": round(std_exg, 4),
+                "min": round(min_exg, 4),
+                "max": round(max_exg, 4),
+            },
+            "classification": classification,
+            "intensity_bands": {
+                "very_low_pct": round(very_low, 2),
+                "low_pct": round(low, 2),
+                "moderate_pct": round(moderate, 2),
+                "high_pct": round(high, 2),
+                "very_high_pct": round(very_high, 2),
+            },
+            "vegetation_percentage": round(high + very_high, 2),
+            "note": "Valores baseados em ExG (proxy RGB). Para NDVI real, são necessárias imagens multiespectrais com banda NIR.",
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise NDVI: {str(e)}"
+        )
 
 
 @router.post("/classify/{image_id}", response_model=AnalysisResponse)
@@ -814,18 +924,94 @@ async def classify_land_use(
         )
 
 
-@router.post("/plant-count/{image_id}")
-async def count_plants(image_id: int, current_user: User = Depends(get_current_user)):
+@router.post("/plant-count/{image_id}", response_model=AnalysisResponse)
+async def count_plants(
+    image_id: int,
+    min_area: int = Query(50, ge=10, le=5000, description="Área mínima em pixels para considerar como planta"),
+    max_area: int = Query(15000, ge=100, le=100000, description="Área máxima em pixels"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Contar número de plantas na imagem.
+    Contar número de plantas/árvores na imagem usando segmentação ExG.
 
-    NOTA: Funcionalidade em desenvolvimento.
-    Requer modelo de detecção de objetos treinado especificamente para imagens aéreas.
+    Algoritmo:
+    1. Calcula ExG (Excess Green) para identificar vegetação
+    2. Aplica threshold automático (percentil 70)
+    3. Usa operações morfológicas para separar plantas
+    4. Conta componentes conectados como plantas individuais
+
+    Retorna:
+    - Contagem total
+    - Localizações (bbox, centróide)
+    - Estatísticas de área
     """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Contagem de plantas requer modelo especializado para imagens aéreas. Em desenvolvimento.",
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contagem de plantas disponível apenas para imagens"
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="plant_count",
+        status="processing",
+        image_id=image_id,
+        config={"min_area": min_area, "max_area": max_area}
     )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        from backend.services.ml.tree_counter import count_trees_by_segmentation
+
+        # Executar contagem
+        count_results = count_trees_by_segmentation(
+            image.file_path,
+            min_tree_area=min_area,
+            max_tree_area=max_area,
+        )
+
+        processing_time = time.time() - start_time
+
+        results = {
+            "total_count": count_results['total_trees'],
+            "total_area_pixels": count_results['total_tree_area_pixels'],
+            "coverage_percentage": count_results['coverage_percentage'],
+            "statistics": {
+                "avg_area": count_results['avg_tree_area'],
+                "min_area": count_results['min_tree_area'],
+                "max_area": count_results['max_tree_area'],
+            },
+            "locations": count_results['trees'],
+            "image_dimensions": count_results['image_dimensions'],
+            "parameters": count_results['parameters'],
+        }
+
+        # Atualizar análise
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na contagem de plantas: {str(e)}"
+        )
 
 
 @router.post("/detect/{image_id}", response_model=AnalysisResponse)
@@ -1397,15 +1583,16 @@ async def export_analysis_pdf(
         all_analyses = all_analyses_result.scalars().all()
 
         # Buscar dados enriquecidos (se existirem)
-        if project and project.latitude and project.longitude:
+        if project:
             try:
                 enriched_result = await db.execute(
                     select(Analysis)
                     .where(Analysis.image.has(Image.project_id == project.id))
                     .where(Analysis.analysis_type == "enriched_data")
                     .where(Analysis.status == "completed")
+                    .order_by(Analysis.completed_at.desc())
                 )
-                enriched_analysis = enriched_result.scalar_one_or_none()
+                enriched_analysis = enriched_result.scalars().first()
                 if enriched_analysis and enriched_analysis.results:
                     enriched_data = enriched_analysis.results
             except Exception:

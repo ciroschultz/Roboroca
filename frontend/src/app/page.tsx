@@ -82,6 +82,7 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [projectInitialTab, setProjectInitialTab] = useState<'overview' | 'map' | 'analysis' | 'report' | undefined>(undefined)
+  const [analysisSection, setAnalysisSection] = useState<string | undefined>(undefined)
 
   // Carregar usuário e projetos do backend (se autenticado)
   useEffect(() => {
@@ -295,28 +296,26 @@ export default function Home() {
 
   const handleMenuClick = (id: string) => {
     setActiveItem(id)
-    setSelectedProject(null)
-    if (id === 'dashboard') setActiveView('dashboard')
-    else if (id === 'upload') setActiveView('upload')
-    else if (id === 'mapa') setActiveView('map')
-    else if (id === 'relatorios') setActiveView('reports')
-    else if (id === 'projetos') setActiveView('projects')
-    else if (id === 'configuracoes') setActiveView('settings')
-    else if (id === 'ajuda') setActiveView('help')
-    else if (analysisSubmenuIds.includes(id)) {
-      // Navigate to most recent completed project with analysis tab
-      const recentCompleted = projects.find(p => p.status === 'completed')
-      if (recentCompleted) {
-        setSelectedProject(recentCompleted)
+    if (analysisSubmenuIds.includes(id)) {
+      // Navigate to analysis tab - use current project if already viewing one
+      const targetProject = selectedProject || projects.find(p => p.status === 'completed') || projects[0]
+      if (targetProject) {
+        setSelectedProject(targetProject as any)
         setProjectInitialTab('analysis')
-        setActiveView('project-detail')
-      } else if (projects.length > 0) {
-        setSelectedProject(projects[0])
-        setProjectInitialTab('analysis')
+        setAnalysisSection(id)
         setActiveView('project-detail')
       } else {
         setActiveView('projects')
       }
+    } else {
+      setSelectedProject(null)
+      if (id === 'dashboard') setActiveView('dashboard')
+      else if (id === 'upload') setActiveView('upload')
+      else if (id === 'mapa') setActiveView('map')
+      else if (id === 'relatorios') setActiveView('reports')
+      else if (id === 'projetos') setActiveView('projects')
+      else if (id === 'configuracoes') setActiveView('settings')
+      else if (id === 'ajuda') setActiveView('help')
     }
   }
 
@@ -328,6 +327,7 @@ export default function Home() {
   const handleProjectClick = (project: Project) => {
     setSelectedProject(project as any)
     setProjectInitialTab(undefined)
+    setAnalysisSection(undefined)
     setActiveView('project-detail')
   }
 
@@ -385,9 +385,11 @@ export default function Home() {
         <ProjectProfile
           project={selectedProject as any}
           initialTab={projectInitialTab}
+          analysisSection={analysisSection}
           onBack={() => {
             setSelectedProject(null)
             setProjectInitialTab(undefined)
+            setAnalysisSection(undefined)
             setActiveView('projects')
             setActiveItem('projetos')
           }}

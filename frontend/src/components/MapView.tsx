@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { API_BASE_URL, loadAuthToken } from '@/lib/api'
 import {
   Layers,
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Minimize2,
   Ruler,
   Download,
   Eye,
@@ -136,7 +137,11 @@ interface ImageGSD {
   is_estimated: boolean
 }
 
-export default function MapView() {
+interface MapViewProps {
+  projectId?: number
+}
+
+export default function MapView({ projectId }: MapViewProps) {
   const [mode, setMode] = useState<MapMode>('project')
   const [zoom, setZoom] = useState(100)
   const [showLayers, setShowLayers] = useState(true)
@@ -174,6 +179,35 @@ export default function MapView() {
   const [imageAnalysis, setImageAnalysis] = useState<ImageAnalysis | null>(null)
   const [savingAnnotation, setSavingAnnotation] = useState(false)
   const [imageGSD, setImageGSD] = useState<ImageGSD | null>(null)
+
+  // Fullscreen
+  const mapContainerRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      mapContainerRef.current?.requestFullscreen()
+    } else {
+      document.exitFullscreen()
+    }
+  }, [])
+
+  // Sync fullscreen state with browser
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  // Tool instruction messages
+  const toolInstructions: Record<string, string> = {
+    'point': 'Clique na imagem para adicionar um marcador',
+    'polygon': 'Clique para adicionar vertices. Duplo-clique para fechar. ESC para cancelar',
+    'measurement': 'Clique no ponto inicial, depois no ponto final para medir',
+    'eraser': 'Clique em uma anotacao para remove-la',
+  }
 
   // Colors for annotations
   const annotationColors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500', '#800080']
@@ -315,7 +349,7 @@ export default function MapView() {
     if (!token) return
 
     try {
-      const response = await fetch(`${API_BASE_URL}/analyses/?image_id=${imageId}`, {
+      const response = await fetch(`${API_BASE_URL}/analysis/?image_id=${imageId}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -541,6 +575,16 @@ export default function MapView() {
     }
   }, [mode])
 
+  // Auto-select project when projectId prop is provided
+  useEffect(() => {
+    if (projectId && projects.length > 0 && !selectedProject) {
+      const target = projects.find(p => p.id === projectId)
+      if (target) {
+        setSelectedProject(target)
+      }
+    }
+  }, [projectId, projects])
+
   // Load project details when selected
   useEffect(() => {
     if (selectedProject) {
@@ -621,6 +665,18 @@ export default function MapView() {
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null)
   const [imageLoading, setImageLoading] = useState(false)
 
+  // Export current image
+  const handleExportImage = useCallback(() => {
+    if (!currentImageUrl) return
+    const a = document.createElement('a')
+    a.href = currentImageUrl
+    const filename = projectImages[selectedImageIndex]?.original_filename || 'imagem_exportada.png'
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }, [currentImageUrl, projectImages, selectedImageIndex])
+
   // Load image with authentication
   const loadImage = async (image: ProjectImage) => {
     const token = getAuthToken()
@@ -673,7 +729,7 @@ export default function MapView() {
   }, [projectImages, selectedImageIndex])
 
   return (
-    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden h-full flex flex-col">
+    <div ref={mapContainerRef} className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden h-full flex flex-col">
       {/* Tabs de modo */}
       <div className="flex border-b border-gray-700/50">
         <button
@@ -872,14 +928,33 @@ export default function MapView() {
                     >
                       <Info size={18} />
                     </button>
-                    <button className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors" title="Exportar">
+                    <button
+                      onClick={handleExportImage}
+                      disabled={!currentImageUrl}
+                      className="p-2 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      title="Exportar imagem"
+                    >
                       <Download size={18} />
                     </button>
-                    <button className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors" title="Tela cheia">
-                      <Maximize2 size={18} />
+                    <button
+                      onClick={toggleFullscreen}
+                      className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                      title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+                    >
+                      {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
                     </button>
                   </div>
                 </div>
+
+                {/* Barra de instrucao da ferramenta ativa */}
+                {activeTool !== 'select' && toolInstructions[activeTool] && (
+                  <div className="absolute top-[72px] left-4 right-4 z-10 flex justify-center">
+                    <div className="px-4 py-2 bg-blue-600/90 text-white text-sm rounded-lg shadow-lg flex items-center gap-2">
+                      <Info size={16} />
+                      {toolInstructions[activeTool]}
+                    </div>
+                  </div>
+                )}
 
                 {/* Exibir imagem do projeto */}
                 {projectImages.length > 0 ? (

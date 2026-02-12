@@ -45,6 +45,20 @@ router = APIRouter(prefix="/images")
 # Extensões permitidas
 ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 
+# Tamanhos máximos por tipo
+MAX_IMAGE_SIZE = 50 * 1024 * 1024    # 50MB para imagens
+MAX_VIDEO_SIZE = 500 * 1024 * 1024   # 500MB para vídeos
+
+# Content types válidos
+ALLOWED_IMAGE_CONTENT_TYPES = {
+    'image/jpeg', 'image/png', 'image/tiff', 'image/geotiff',
+    'image/x-tiff', 'application/octet-stream',  # fallback para .tif/.geotiff
+}
+ALLOWED_VIDEO_CONTENT_TYPES = {
+    'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska',
+    'application/octet-stream',  # fallback
+}
+
 
 def validate_file_extension(filename: str) -> bool:
     """Validar extensão do arquivo."""
@@ -141,16 +155,29 @@ async def upload_image(
 
     file_path = os.path.join(upload_dir, unique_filename)
 
+    # Validar content_type
+    is_video = ext in VIDEO_EXTENSIONS
+
+    if file.content_type and file.content_type != 'application/octet-stream':
+        allowed_types = ALLOWED_VIDEO_CONTENT_TYPES if is_video else ALLOWED_IMAGE_CONTENT_TYPES
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tipo de arquivo inválido: {file.content_type}"
+            )
+
     # Salvar arquivo
     try:
         content = await file.read()
         file_size = len(content)
 
-        # Verificar tamanho
-        if file_size > settings.MAX_UPLOAD_SIZE:
+        # Verificar tamanho com limite específico por tipo
+        max_size = MAX_VIDEO_SIZE if is_video else MAX_IMAGE_SIZE
+        if file_size > max_size:
+            max_mb = max_size / 1024 / 1024
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Arquivo muito grande. Máximo: {settings.MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB"
+                detail=f"Arquivo muito grande ({file_size / 1024 / 1024:.1f}MB). Máximo para {'vídeos' if is_video else 'imagens'}: {max_mb:.0f}MB"
             )
 
         with open(file_path, "wb") as f:
@@ -305,10 +332,14 @@ async def upload_multiple_images(
             content = await file.read()
             file_size = len(content)
 
-            if file_size > settings.MAX_UPLOAD_SIZE:
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            file_is_video = file_ext in VIDEO_EXTENSIONS
+            file_max_size = MAX_VIDEO_SIZE if file_is_video else MAX_IMAGE_SIZE
+            if file_size > file_max_size:
+                max_mb = file_max_size / 1024 / 1024
                 errors.append({
                     "filename": file.filename,
-                    "error": "Arquivo muito grande"
+                    "error": f"Arquivo muito grande ({file_size / 1024 / 1024:.1f}MB). Máximo: {max_mb:.0f}MB"
                 })
                 continue
 
