@@ -436,6 +436,189 @@ async def list_projects(
     return {"projects": projects_response, "total": total}
 
 
+@router.get("/stats")
+async def get_dashboard_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obter estatísticas agregadas do dashboard do usuário.
+
+    Retorna contagens totais de projetos, imagens, análises,
+    área total e distribuições por status e tipo.
+    """
+    # Total de projetos do usuário
+    total_projects_result = await db.execute(
+        select(func.count(Project.id)).where(Project.owner_id == current_user.id)
+    )
+    total_projects = total_projects_result.scalar() or 0
+
+    # Total de imagens (join com Project)
+    total_images_result = await db.execute(
+        select(func.count(Image.id))
+        .join(Project, Image.project_id == Project.id)
+        .where(Project.owner_id == current_user.id)
+    )
+    total_images = total_images_result.scalar() or 0
+
+    # Total de análises (join Image -> Project)
+    total_analyses_result = await db.execute(
+        select(func.count(Analysis.id))
+        .join(Image, Analysis.image_id == Image.id)
+        .join(Project, Image.project_id == Project.id)
+        .where(Project.owner_id == current_user.id)
+    )
+    total_analyses = total_analyses_result.scalar() or 0
+
+    # Área total em hectares
+    total_area_result = await db.execute(
+        select(func.sum(Project.total_area_ha))
+        .where(Project.owner_id == current_user.id)
+    )
+    total_area_ha = total_area_result.scalar() or 0.0
+
+    # Projetos por status
+    projects_by_status_result = await db.execute(
+        select(Project.status, func.count(Project.id))
+        .where(Project.owner_id == current_user.id)
+        .group_by(Project.status)
+    )
+    projects_by_status_raw = projects_by_status_result.all()
+    projects_by_status = {
+        "pending": 0,
+        "processing": 0,
+        "completed": 0,
+        "error": 0
+    }
+    for status_val, count in projects_by_status_raw:
+        if status_val in projects_by_status:
+            projects_by_status[status_val] = count
+
+    # Análises por tipo (join Image -> Project)
+    analyses_by_type_result = await db.execute(
+        select(Analysis.analysis_type, func.count(Analysis.id))
+        .join(Image, Analysis.image_id == Image.id)
+        .join(Project, Image.project_id == Project.id)
+        .where(Project.owner_id == current_user.id)
+        .group_by(Analysis.analysis_type)
+    )
+    analyses_by_type_raw = analyses_by_type_result.all()
+    analyses_by_type = {analysis_type: count for analysis_type, count in analyses_by_type_raw}
+
+    return {
+        "total_projects": total_projects,
+        "total_images": total_images,
+        "total_analyses": total_analyses,
+        "total_area_ha": round(total_area_ha, 2),
+        "projects_by_status": projects_by_status,
+        "analyses_by_type": analyses_by_type
+    }
+
+
+@router.get("/comparison")
+async def get_projects_comparison(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Comparar projetos do usuário com métricas agregadas.
+
+    Retorna lista de projetos com contagem de imagens,
+    cobertura vegetal média, índice de saúde, contagem
+    de árvores e outras métricas calculadas.
+    """
+    from sqlalchemy.orm import selectinload
+
+    # Buscar todos os projetos do usuário com imagens carregadas
+    projects_result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.images))
+        .where(Project.owner_id == current_user.id)
+        .order_by(Project.created_at.desc())
+    )
+    projects = projects_result.scalars().all()
+
+    projects_data = []
+
+    for project in projects:
+        # Contar imagens do projeto
+        image_count = len(project.images) if project.images else 0
+
+        # Buscar análises completas para este projeto
+        analyses_result = await db.execute(
+            select(Analysis)
+            .join(Image, Analysis.image_id == Image.id)
+            .where(
+                Image.project_id == project.id,
+                Analysis.analysis_type == "full_report",
+                Analysis.status == "completed"
+            )
+        )
+        analyses = analyses_result.scalars().all()
+
+        # Calcular métricas agregadas
+        vegetation_coverages = []
+        health_indices = []
+        total_trees = 0
+
+        for analysis in analyses:
+            if not analysis.results:
+                continue
+
+            results = analysis.results
+
+            # Extrair cobertura vegetal
+            if 'vegetation_coverage' in results:
+                veg_pct = results['vegetation_coverage'].get('vegetation_percentage', 0)
+                vegetation_coverages.append(veg_pct)
+            elif 'coverage' in results:
+                veg_pct = results['coverage'].get('vegetation_percentage', 0)
+                vegetation_coverages.append(veg_pct)
+
+            # Extrair índice de saúde
+            if 'vegetation_health' in results:
+                health_idx = results['vegetation_health'].get('health_index', 0)
+                health_indices.append(health_idx)
+            elif 'health' in results:
+                health_idx = results['health'].get('health_index', 0)
+                health_indices.append(health_idx)
+
+            # Extrair contagem de árvores (object_detection ou tree_count)
+            if 'object_detection' in results:
+                det = results['object_detection']
+                if 'by_class' in det and 'arvore' in det['by_class']:
+                    total_trees += det['by_class']['arvore']
+                elif 'total_detections' in det:
+                    total_trees += det.get('total_detections', 0)
+            elif 'tree_count' in results:
+                tree_data = results['tree_count']
+                total_trees += tree_data.get('total_trees', 0)
+
+        # Calcular médias
+        vegetation_coverage_avg = (
+            round(sum(vegetation_coverages) / len(vegetation_coverages), 2)
+            if vegetation_coverages else 0.0
+        )
+        health_index_avg = (
+            round(sum(health_indices) / len(health_indices), 2)
+            if health_indices else 0.0
+        )
+
+        projects_data.append({
+            "id": project.id,
+            "name": project.name,
+            "status": project.status or "pending",
+            "image_count": image_count,
+            "total_area_ha": round(project.total_area_ha, 2) if project.total_area_ha else 0.0,
+            "vegetation_coverage_avg": vegetation_coverage_avg,
+            "health_index_avg": health_index_avg,
+            "total_trees": total_trees,
+            "created_at": project.created_at.isoformat() if project.created_at else None
+        })
+
+    return {"projects": projects_data}
+
+
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     project_data: ProjectCreate,

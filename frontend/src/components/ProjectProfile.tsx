@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   ArrowLeft,
   Download,
@@ -38,6 +38,7 @@ import MapView from './MapView'
 import {
   getProjectAnalyses,
   getProjectEnrichedData,
+  getProjectAnalysisSummary,
   downloadAnalysisPDF,
   analyzeProject,
   type Analysis,
@@ -47,6 +48,7 @@ import {
   type ElevationData,
   type GeocodingData,
 } from '@/lib/api'
+import { useToast } from './Toast'
 
 interface ProjectData {
   id: string
@@ -69,9 +71,17 @@ interface ProjectData {
   }
 }
 
+interface AnalysisProgress {
+  stage: string
+  analyzedImages: number
+  totalImages: number
+  startedAt: number
+}
+
 interface ProjectProfileProps {
   project: ProjectData
   onBack: () => void
+  onRefresh?: () => void
   initialTab?: 'overview' | 'map' | 'analysis' | 'report'
   analysisSection?: string
 }
@@ -86,11 +96,14 @@ const sectionMap: Record<string, string> = {
   'altura': 'section-summary',
 }
 
-export default function ProjectProfile({ project, onBack, initialTab, analysisSection }: ProjectProfileProps) {
+export default function ProjectProfile({ project, onBack, onRefresh, initialTab, analysisSection }: ProjectProfileProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>(initialTab || 'overview')
   const [analyses, setAnalyses] = useState<Analysis[]>([])
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
   const [loadingAnalyses, setLoadingAnalyses] = useState(false)
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const toast = useToast()
 
   // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
   useEffect(() => {
@@ -128,6 +141,77 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
     fetchEnrichedData()
   }, [project.id])
 
+  // Stages for the ML analysis pipeline
+  const analysisStages = [
+    'Preparando imagens...',
+    'Segmentacao (DeepLabV3)...',
+    'Classificacao de cena (ResNet18)...',
+    'Deteccao de objetos (YOLO)...',
+    'Contagem de arvores...',
+    'Extraindo caracteristicas visuais...',
+    'Gerando relatorio final...',
+  ]
+
+  // Poll analysis progress during processing
+  const pollProgress = useCallback(async () => {
+    try {
+      const summary = await getProjectAnalysisSummary(Number(project.id))
+      const analyzed = summary.analyzed_images || 0
+      const total = summary.total_images || 1
+
+      // Estimate which stage based on progress
+      const progressRatio = analyzed / total
+      const stageIdx = Math.min(
+        Math.floor(progressRatio * analysisStages.length),
+        analysisStages.length - 1
+      )
+
+      setAnalysisProgress(prev => ({
+        stage: analysisStages[stageIdx],
+        analyzedImages: analyzed,
+        totalImages: total,
+        startedAt: prev?.startedAt || Date.now(),
+      }))
+
+      // Check if analysis is complete
+      if (summary.status === 'completed' || (analyzed >= total && total > 0)) {
+        // Stop polling
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current)
+          pollingRef.current = null
+        }
+        setAnalysisProgress(null)
+        toast.success('Analise concluida', `${analyzed} imagem(ns) analisada(s) com sucesso`)
+        // Refresh parent project list and local analyses
+        onRefresh?.()
+        fetchAnalyses()
+      }
+    } catch {
+      // Silently fail polling — analysis still running
+    }
+  }, [project.id, onRefresh])
+
+  // Start polling when project is processing
+  useEffect(() => {
+    if (project.status === 'processing' && !pollingRef.current) {
+      setAnalysisProgress({
+        stage: analysisStages[0],
+        analyzedImages: 0,
+        totalImages: project.imageCount || 1,
+        startedAt: Date.now(),
+      })
+      pollingRef.current = setInterval(pollProgress, 5000)
+      // Also poll immediately
+      pollProgress()
+    }
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
+      }
+    }
+  }, [project.status, pollProgress])
+
   const fetchAnalyses = async () => {
     setLoadingAnalyses(true)
     try {
@@ -135,6 +219,7 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
       setAnalyses(data.analyses.filter(a => a.status === 'completed'))
     } catch (err) {
       console.error('Erro ao buscar análises:', err)
+      toast.error('Erro ao carregar analises', 'Nao foi possivel carregar os resultados de analise')
     } finally {
       setLoadingAnalyses(false)
     }
@@ -146,7 +231,7 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
       const data = await getProjectEnrichedData(Number(project.id))
       setEnrichedData(data)
     } catch (err) {
-      // Pode falhar se não houver GPS
+      // Silently fail - enriched data is optional (may not have GPS)
       console.error('Erro ao buscar dados enriquecidos:', err)
     } finally {
       setLoadingEnriched(false)
@@ -156,11 +241,24 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
   const handleStartAnalysis = async () => {
     try {
       setIsReanalyzing(true)
-      await analyzeProject(Number(project.id))
-      // Reload the page to show processing state
-      window.location.reload()
+      const result = await analyzeProject(Number(project.id))
+      if (result.analyses_started === 0) {
+        toast.info('Analise ja realizada', 'Todas as imagens ja foram analisadas')
+        return
+      }
+      toast.info('Analise iniciada', `Analisando ${result.analyses_started} arquivo(s)...`)
+      // Start progress tracking
+      setAnalysisProgress({
+        stage: analysisStages[0],
+        analyzedImages: 0,
+        totalImages: result.analyses_started,
+        startedAt: Date.now(),
+      })
+      pollingRef.current = setInterval(pollProgress, 5000)
+      onRefresh?.()
     } catch (err) {
       console.error('Erro ao iniciar analise:', err)
+      toast.error('Erro na analise', 'Falha ao iniciar analise. Verifique se o projeto possui imagens.')
     } finally {
       setIsReanalyzing(false)
     }
@@ -169,12 +267,23 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
   const handleReanalyze = async () => {
     try {
       setIsReanalyzing(true)
-      await analyzeProject(Number(project.id))
-      // Reload the page to show processing state
-      window.location.reload()
+      const result = await analyzeProject(Number(project.id))
+      if (result.analyses_started === 0) {
+        toast.info('Analise ja realizada', 'Todas as imagens ja foram analisadas. Delete analises anteriores para forcar re-analise.')
+        return
+      }
+      toast.info('Re-analise iniciada', `Analisando ${result.analyses_started} arquivo(s)...`)
+      setAnalysisProgress({
+        stage: analysisStages[0],
+        analyzedImages: 0,
+        totalImages: result.analyses_started,
+        startedAt: Date.now(),
+      })
+      pollingRef.current = setInterval(pollProgress, 5000)
+      onRefresh?.()
     } catch (err) {
       console.error('Erro ao re-analisar:', err)
-      alert('Erro ao iniciar re-analise. Tente novamente.')
+      toast.error('Erro na re-analise', 'Falha ao iniciar re-analise. Tente novamente.')
     } finally {
       setIsReanalyzing(false)
     }
@@ -184,7 +293,6 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
     if (analyses.length === 0) return
     setIsExportingJson(true)
     try {
-      // Criar JSON com todos os resultados
       const exportData = {
         project: {
           id: project.id,
@@ -204,7 +312,6 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
         exported_at: new Date().toISOString(),
       }
 
-      // Download como arquivo JSON
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -214,8 +321,10 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      toast.success('JSON exportado', 'Arquivo salvo com sucesso')
     } catch (err) {
       console.error('Erro ao exportar JSON:', err)
+      toast.error('Erro ao exportar', 'Falha ao gerar arquivo JSON')
     } finally {
       setIsExportingJson(false)
     }
@@ -226,8 +335,10 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
     setIsExportingPdf(true)
     try {
       await downloadAnalysisPDF(analyses[0].id, `relatorio_${project.name}.pdf`)
+      toast.success('PDF exportado', 'Relatorio salvo com sucesso')
     } catch (err) {
       console.error('Erro ao exportar PDF:', err)
+      toast.error('Erro ao exportar', 'Falha ao gerar relatorio PDF')
     } finally {
       setIsExportingPdf(false)
     }
@@ -511,7 +622,7 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
               </div>
             ) : null}
           </div>
-        ) : project.status === 'processing' ? (
+        ) : project.status === 'processing' || analysisProgress ? (
           <div className="flex flex-col items-center justify-center py-16">
             <div className="w-24 h-24 rounded-full bg-yellow-900/20 flex items-center justify-center mb-6">
               <div className="w-16 h-16 rounded-full border-4 border-yellow-500/30 border-t-yellow-500 animate-spin" />
@@ -521,14 +632,69 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
               O sistema esta analisando suas imagens com algoritmos de Machine Learning.
               Isso pode levar alguns minutos dependendo do tamanho dos arquivos.
             </p>
-            <div className="w-64 h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div className="h-full bg-yellow-500 rounded-full animate-[progressIndeterminate_2s_ease-in-out_infinite]"
-                style={{
-                  width: '40%',
-                  animation: 'progressIndeterminate 2s ease-in-out infinite',
-                }}
-              />
-            </div>
+
+            {/* Progress bar */}
+            {analysisProgress ? (
+              <div className="w-80 mb-4">
+                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                  <span>Imagem {analysisProgress.analyzedImages} de {analysisProgress.totalImages}</span>
+                  <span>{analysisProgress.totalImages > 0 ? Math.round((analysisProgress.analyzedImages / analysisProgress.totalImages) * 100) : 0}%</span>
+                </div>
+                <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-yellow-500 rounded-full transition-all duration-500"
+                    style={{ width: `${analysisProgress.totalImages > 0 ? Math.max(5, (analysisProgress.analyzedImages / analysisProgress.totalImages) * 100) : 5}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="w-64 h-2 bg-gray-700 rounded-full overflow-hidden mb-4">
+                <div className="h-full bg-yellow-500 rounded-full"
+                  style={{
+                    width: '40%',
+                    animation: 'progressIndeterminate 2s ease-in-out infinite',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Current stage */}
+            <p className="text-sm text-yellow-400 font-medium mb-2">
+              {analysisProgress?.stage || 'Analisando vegetacao, solo e objetos...'}
+            </p>
+
+            {/* Pipeline stages */}
+            {analysisProgress && (
+              <div className="w-80 mt-4 space-y-2">
+                {analysisStages.map((stage, idx) => {
+                  const currentIdx = analysisStages.indexOf(analysisProgress.stage)
+                  const isDone = idx < currentIdx
+                  const isCurrent = idx === currentIdx
+                  return (
+                    <div key={idx} className="flex items-center gap-2 text-xs">
+                      {isDone ? (
+                        <CheckCircle size={14} className="text-green-400 shrink-0" />
+                      ) : isCurrent ? (
+                        <Loader2 size={14} className="text-yellow-400 animate-spin shrink-0" />
+                      ) : (
+                        <div className="w-3.5 h-3.5 rounded-full border border-gray-600 shrink-0" />
+                      )}
+                      <span className={isDone ? 'text-green-400' : isCurrent ? 'text-yellow-400 font-medium' : 'text-gray-600'}>
+                        {stage}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Elapsed time */}
+            {analysisProgress && (
+              <p className="text-xs text-gray-500 mt-4">
+                Tempo decorrido: {Math.round((Date.now() - analysisProgress.startedAt) / 1000)}s
+              </p>
+            )}
+
             <style jsx>{`
               @keyframes progressIndeterminate {
                 0% { transform: translateX(-100%); }
@@ -536,7 +702,6 @@ export default function ProjectProfile({ project, onBack, initialTab, analysisSe
                 100% { transform: translateX(-100%); }
               }
             `}</style>
-            <p className="text-sm text-gray-500 mt-2">Analisando vegetacao, solo e objetos...</p>
           </div>
         ) : project.status === 'error' ? (
           <div className="flex flex-col items-center justify-center py-16">

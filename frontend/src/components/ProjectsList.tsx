@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Search,
   Filter,
@@ -37,10 +37,33 @@ interface ProjectsListProps {
   onUploadClick: () => void
 }
 
+const PROJECTS_PER_PAGE = 12
+
 function AuthenticatedThumbnail({ src, alt, className }: { src: string; alt: string; className?: string }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [isVisible, setIsVisible] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Lazy load: only fetch when visible in viewport
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '200px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
+    if (!isVisible) return
     let revoke = ''
     const token = loadAuthToken()
     fetch(src, {
@@ -58,22 +81,39 @@ function AuthenticatedThumbnail({ src, alt, className }: { src: string; alt: str
       .catch(() => setBlobUrl(null))
 
     return () => { if (revoke) URL.revokeObjectURL(revoke) }
-  }, [src])
+  }, [src, isVisible])
 
-  if (!blobUrl) return null
-  return <img src={blobUrl} alt={alt} className={className} />
+  return (
+    <div ref={containerRef} className={className}>
+      {blobUrl ? (
+        <img src={blobUrl} alt={alt} className="w-full h-full object-cover" />
+      ) : isVisible ? (
+        <div className="w-full h-full bg-gray-800/50 animate-pulse" />
+      ) : null}
+    </div>
+  )
 }
 
 export default function ProjectsList({ projects, onProjectClick, onUploadClick }: ProjectsListProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'processing'>('all')
+  const [currentPage, setCurrentPage] = useState(1)
 
-  const filteredProjects = projects.filter(project => {
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(1) }, [searchQuery, filterStatus])
+
+  const allFilteredProjects = projects.filter(project => {
     const matchesSearch = project.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesFilter = filterStatus === 'all' || project.status === filterStatus
     return matchesSearch && matchesFilter
   })
+
+  const totalPages = Math.max(1, Math.ceil(allFilteredProjects.length / PROJECTS_PER_PAGE))
+  const filteredProjects = allFilteredProjects.slice(
+    (currentPage - 1) * PROJECTS_PER_PAGE,
+    currentPage * PROJECTS_PER_PAGE
+  )
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -287,6 +327,44 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-6">
+          <p className="text-sm text-gray-500">
+            Mostrando {(currentPage - 1) * PROJECTS_PER_PAGE + 1}-{Math.min(currentPage * PROJECTS_PER_PAGE, allFilteredProjects.length)} de {allFilteredProjects.length} projetos
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1.5 text-sm rounded-lg transition-colors disabled:text-gray-600 disabled:cursor-not-allowed text-gray-400 hover:text-white hover:bg-gray-700/50"
+            >
+              Anterior
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`w-8 h-8 text-sm rounded-lg transition-colors ${
+                  page === currentPage
+                    ? 'bg-[#6AAF3D] text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1.5 text-sm rounded-lg transition-colors disabled:text-gray-600 disabled:cursor-not-allowed text-gray-400 hover:text-white hover:bg-gray-700/50"
+            >
+              Proximo
+            </button>
+          </div>
         </div>
       )}
     </div>

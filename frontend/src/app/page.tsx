@@ -12,6 +12,7 @@ import {
   getCurrentUser,
   logout as apiLogout,
   getProjectAnalysisSummary,
+  getDashboardStats,
   Project as ApiProject,
   User,
 } from '@/lib/api'
@@ -28,8 +29,10 @@ import UploadZone from '@/components/UploadZone'
 import MapView from '@/components/MapView'
 import EmptyState from '@/components/EmptyState'
 import ProjectsList from '@/components/ProjectsList'
+import ProjectComparison from '@/components/ProjectComparison'
 import ProjectProfile from '@/components/ProjectProfile'
 import SettingsPage from '@/components/SettingsPage'
+import { useToast } from '@/components/Toast'
 import {
   Leaf,
   Trees,
@@ -73,7 +76,7 @@ const initialProjects: Project[] = []
 
 export default function Home() {
   const [activeItem, setActiveItem] = useState('dashboard')
-  const [activeView, setActiveView] = useState<'dashboard' | 'upload' | 'map' | 'reports' | 'projects' | 'project-detail' | 'settings' | 'help'>('dashboard')
+  const [activeView, setActiveView] = useState<'dashboard' | 'upload' | 'map' | 'reports' | 'projects' | 'project-detail' | 'settings' | 'help' | 'comparison'>('dashboard')
   const [projects, setProjects] = useState<Project[]>(initialProjects)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
@@ -81,8 +84,17 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const toast = useToast()
   const [projectInitialTab, setProjectInitialTab] = useState<'overview' | 'map' | 'analysis' | 'report' | undefined>(undefined)
   const [analysisSection, setAnalysisSection] = useState<string | undefined>(undefined)
+  const [dashboardStats, setDashboardStats] = useState<{
+    total_projects: number
+    total_images: number
+    total_analyses: number
+    total_area_ha: number
+    projects_by_status: Record<string, number>
+    analyses_by_type: Record<string, number>
+  } | null>(null)
 
   // Carregar usuário e projetos do backend (se autenticado)
   useEffect(() => {
@@ -94,6 +106,7 @@ export default function Home() {
           setCurrentUser(user)
           setIsAuthenticated(true)
           await loadProjectsFromApi()
+          getDashboardStats().then(setDashboardStats).catch(() => {})
         } catch (error) {
           // Token inválido ou expirado
           apiLogout()
@@ -112,6 +125,7 @@ export default function Home() {
     setCurrentUser(user)
     setIsAuthenticated(true)
     loadProjectsFromApi()
+    getDashboardStats().then(setDashboardStats).catch(() => {})
   }
 
   // Handler para logout
@@ -199,7 +213,9 @@ export default function Home() {
       setProjects(apiProjects)
     } catch (error) {
       console.error('Erro ao carregar projetos:', error)
-      // Em caso de erro, mantém lista vazia
+      if (!silent) {
+        toast.error('Erro ao carregar projetos', 'Verifique sua conexao e tente novamente')
+      }
       setProjects([])
     } finally {
       if (!silent) setIsLoading(false)
@@ -312,6 +328,7 @@ export default function Home() {
       if (id === 'dashboard') setActiveView('dashboard')
       else if (id === 'upload') setActiveView('upload')
       else if (id === 'mapa') setActiveView('map')
+      else if (id === 'comparacao') setActiveView('comparison')
       else if (id === 'relatorios') setActiveView('reports')
       else if (id === 'projetos') setActiveView('projects')
       else if (id === 'configuracoes') setActiveView('settings')
@@ -393,6 +410,7 @@ export default function Home() {
             setActiveView('projects')
             setActiveItem('projetos')
           }}
+          onRefresh={() => loadProjectsFromApi(true)}
         />
       )
     }
@@ -481,6 +499,16 @@ export default function Home() {
               ))}
             </div>
           </div>
+        )
+
+      case 'comparison':
+        return (
+          <ProjectComparison
+            onProjectClick={(projectId) => {
+              const project = projects.find(p => p.id === String(projectId))
+              if (project) handleProjectClick(project)
+            }}
+          />
         )
 
       case 'projects':
@@ -592,20 +620,19 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <StatCard
                 title="Projetos Ativos"
-                value={projects.length}
+                value={dashboardStats?.total_projects ?? projects.length}
                 icon={<FileText size={24} />}
                 color="purple"
               />
               <StatCard
-                title="Analises Concluidas"
-                value={completedProjects.length}
+                title="Total de Imagens"
+                value={dashboardStats?.total_images ?? projects.reduce((s, p) => s + p.imageCount, 0)}
                 icon={<TrendingUp size={24} />}
                 color="blue"
               />
               <StatCard
-                title="Area Agricultavel"
-                value={Math.round(aggregatedLandUse.find(l => l.name === 'Agricultura')?.value || 0)}
-                unit="%"
+                title="Analises Concluidas"
+                value={dashboardStats?.total_analyses ?? completedProjects.length}
                 icon={<Mountain size={24} />}
                 color="green"
               />
@@ -756,6 +783,23 @@ export default function Home() {
                   />
                 </div>
 
+                {/* Link para comparação */}
+                <div
+                  onClick={() => { setActiveItem('comparacao'); setActiveView('comparison') }}
+                  className="bg-gradient-to-r from-blue-900/20 to-[#1a1a2e] border border-blue-700/30 rounded-xl p-4 mb-6 flex items-center justify-between cursor-pointer hover:border-blue-600/50 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-500/20 rounded-lg">
+                      <TrendingUp className="text-blue-400" size={20} />
+                    </div>
+                    <div>
+                      <h4 className="text-white font-semibold">Comparar Projetos</h4>
+                      <p className="text-gray-400 text-xs">Veja todos os projetos lado a lado com metricas detalhadas</p>
+                    </div>
+                  </div>
+                  <ArrowRight className="text-blue-400" size={20} />
+                </div>
+
                 {/* Lista de projetos recentes */}
                 <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-5">
                   <div className="flex items-center justify-between mb-4">
@@ -833,6 +877,7 @@ export default function Home() {
       case 'upload': return { title: 'Upload de Imagens', subtitle: 'Envie imagens de drone ou satélite para criar um novo projeto' }
       case 'map': return { title: 'Visualizar Mapa', subtitle: 'Visualize e analise as camadas geoespaciais' }
       case 'reports': return { title: 'Relatórios', subtitle: 'Gerencie e baixe seus relatórios' }
+      case 'comparison': return { title: 'Comparação de Projetos', subtitle: 'Compare metricas entre todos os projetos' }
       case 'projects': return { title: 'Meus Projetos', subtitle: `${projects.length} projeto${projects.length !== 1 ? 's' : ''} cadastrado${projects.length !== 1 ? 's' : ''}` }
       case 'settings': return { title: 'Configurações', subtitle: 'Gerencie sua conta e preferências' }
       case 'help': return { title: 'Ajuda', subtitle: 'Central de suporte e documentação' }

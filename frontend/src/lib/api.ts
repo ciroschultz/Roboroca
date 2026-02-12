@@ -853,4 +853,37 @@ export async function getApiInfo(): Promise<{ message: string; version: string; 
   }
 }
 
+/**
+ * Obter estatísticas do dashboard
+ */
+export async function getDashboardStats(): Promise<{
+  total_projects: number
+  total_images: number
+  total_analyses: number
+  total_area_ha: number
+  projects_by_status: Record<string, number>
+  analyses_by_type: Record<string, number>
+}> {
+  return apiRequest('/projects/stats')
+}
+
+/**
+ * Obter comparação entre projetos
+ */
+export async function getProjectsComparison(): Promise<{
+  projects: Array<{
+    id: number
+    name: string
+    status: string
+    image_count: number
+    total_area_ha: number
+    vegetation_coverage_avg: number
+    health_index_avg: number
+    total_trees: number
+    created_at: string
+  }>
+}> {
+  return apiRequest('/projects/comparison')
+}
+
 export { ApiError }

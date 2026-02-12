@@ -82,6 +82,11 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
       ],
     },
     {
+      id: 'comparacao',
+      label: 'Comparação',
+      icon: <BarChart3 size={20} />,
+    },
+    {
       id: 'relatorios',
       label: 'Relatórios',
       icon: <FileText size={20} />,
