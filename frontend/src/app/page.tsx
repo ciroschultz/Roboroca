@@ -13,6 +13,7 @@ import {
   logout as apiLogout,
   getProjectAnalysisSummary,
   getDashboardStats,
+  updateUserPreferences,
   Project as ApiProject,
   User,
 } from '@/lib/api'
@@ -59,6 +60,9 @@ interface Project {
   imageCount: number
   area: number
   thumbnail?: string
+  description?: string
+  latitude?: number
+  longitude?: number
   results?: {
     vegetationCoverage: number  // % de cobertura vegetal (era ndviMean)
     healthIndex: number         // % índice de saúde (era ndwiMean)
@@ -95,6 +99,7 @@ export default function Home() {
     projects_by_status: Record<string, number>
     analyses_by_type: Record<string, number>
   } | null>(null)
+  const [userTheme, setUserTheme] = useState<'dark' | 'light' | 'system'>('dark')
 
   // Carregar usuário e projetos do backend (se autenticado)
   useEffect(() => {
@@ -105,6 +110,7 @@ export default function Home() {
           const user = await getCurrentUser()
           setCurrentUser(user)
           setIsAuthenticated(true)
+          if ((user as any).theme) setUserTheme((user as any).theme)
           await loadProjectsFromApi()
           getDashboardStats().then(setDashboardStats).catch(() => {})
         } catch (error) {
@@ -134,6 +140,18 @@ export default function Home() {
     setCurrentUser(null)
     setIsAuthenticated(false)
     setProjects(initialProjects)
+  }
+
+  const handleThemeToggle = async () => {
+    const newTheme = userTheme === 'dark' ? 'light' : 'dark'
+    setUserTheme(newTheme)
+    try {
+      const updatedUser = await updateUserPreferences({ theme: newTheme })
+      setCurrentUser(updatedUser)
+    } catch {
+      // revert on error
+      setUserTheme(userTheme)
+    }
   }
 
   const loadProjectsFromApi = async (silent = false) => {
@@ -206,6 +224,9 @@ export default function Home() {
             area: projectArea,
             thumbnail,
             results,
+            description: p.description,
+            latitude: p.latitude,
+            longitude: p.longitude,
           }
         })
       )
@@ -491,7 +512,14 @@ export default function Home() {
                     >
                       Ver Detalhes
                     </button>
-                    <button className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg text-sm transition-colors">
+                    <button
+                      onClick={() => {
+                        setSelectedProject(project as any)
+                        setProjectInitialTab('report')
+                        setActiveView('project-detail')
+                      }}
+                      className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg text-sm transition-colors"
+                    >
                       Baixar PDF
                     </button>
                   </div>
@@ -988,6 +1016,18 @@ export default function Home() {
               subtitle=""
               currentUser={currentUser}
               onLogout={handleLogout}
+              onNavigate={(view) => {
+                if (view === 'settings') { setActiveItem('configuracoes'); setActiveView('settings') }
+                else if (view === 'reports') { setActiveItem('relatorios'); setActiveView('reports') }
+                else if (view === 'help') { setActiveItem('ajuda'); setActiveView('help') }
+              }}
+              onProjectSelect={(projectId) => {
+                const p = projects.find(pr => pr.id === projectId)
+                if (p) handleProjectClick(p)
+              }}
+              projects={projects.map(p => ({ id: p.id, name: p.name }))}
+              theme={userTheme}
+              onThemeToggle={handleThemeToggle}
               compact
             />
           </header>

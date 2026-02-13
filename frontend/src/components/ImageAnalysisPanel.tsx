@@ -48,6 +48,7 @@ import {
 } from '@/lib/api'
 import { useToast } from './Toast'
 import { useConfirmDialog } from './ConfirmDialog'
+import { useNotifications } from './NotificationContext'
 
 interface ImageAnalysisPanelProps {
   projectId: number
@@ -79,6 +80,7 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
   const [loadingAnalyses, setLoadingAnalyses] = useState(false)
   const [expandedAnalysis, setExpandedAnalysis] = useState<number | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const { addNotification } = useNotifications()
 
   // Video-specific
   const [videoSampleRate, setVideoSampleRate] = useState(30)
@@ -173,10 +175,12 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
     try {
       await fn()
       toast.success('Analise concluida', `${key} finalizada com sucesso`)
+      addNotification('success', 'Analise concluida', `${key} em "${selectedImage.original_filename}" finalizada`)
       await loadImageAnalyses(selectedImage.id)
       onAnalysisComplete?.()
     } catch (err: any) {
       toast.error('Erro na analise', err?.detail || err?.message || 'Falha ao executar analise')
+      addNotification('error', 'Erro na analise', `${key} falhou: ${err?.detail || err?.message || 'erro desconhecido'}`)
     } finally {
       setIsRunning(prev => ({ ...prev, [key]: false }))
     }

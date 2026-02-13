@@ -68,6 +68,9 @@ interface ProjectData {
   imageCount: number
   area: number // hectares
   location?: string
+  description?: string
+  latitude?: number
+  longitude?: number
   results?: {
     vegetationCoverage: number  // % de cobertura vegetal
     healthIndex: number         // % índice de saúde
@@ -1661,7 +1664,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
               {/* ML Results Summary in Report */}
               {(segmentation || sceneClassification || objectDetection || vegetationType) && (
                 <div className="bg-gray-800/50 rounded-lg p-6 mb-6">
-                  <h5 className="text-white font-medium mb-3">Resultados de Machine Learning</h5>
+                  <h5 className="text-white font-medium mb-3">Resultados de Machine Learning (Agregado)</h5>
                   <dl className="space-y-2 text-sm">
                     {segmentation && (segmentation as any)?.num_classes_detected && (
                       <div className="flex justify-between">
@@ -1669,24 +1672,55 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                         <dd className="text-white">{(segmentation as any).num_classes_detected}</dd>
                       </div>
                     )}
+                    {segmentation && (segmentation as any)?.category_percentages && (
+                      <>
+                        {Object.entries((segmentation as any).category_percentages).map(([cat, pct]: [string, any]) => (
+                          <div key={cat} className="flex justify-between pl-4">
+                            <dt className="text-gray-500">{cat}</dt>
+                            <dd className="text-white">{typeof pct === 'number' ? pct.toFixed(1) : pct}%</dd>
+                          </div>
+                        ))}
+                      </>
+                    )}
                     {vegetationType && (vegetationType as any)?.vegetation_type && (
                       <div className="flex justify-between">
                         <dt className="text-gray-500">Tipo de Vegetacao</dt>
-                        <dd className="text-white">{(vegetationType as any).vegetation_type}</dd>
+                        <dd className="text-white">{(vegetationType as any).vegetation_type} ({(vegetationType as any).vegetation_density || 'N/A'})</dd>
+                      </div>
+                    )}
+                    {vegetationType && (vegetationType as any)?.confidence !== undefined && (
+                      <div className="flex justify-between pl-4">
+                        <dt className="text-gray-500">Confianca</dt>
+                        <dd className="text-white">{((vegetationType as any).confidence * 100).toFixed(1)}%</dd>
                       </div>
                     )}
                     {objectDetection && (objectDetection as any)?.total_detections !== undefined && (
                       <div className="flex justify-between">
-                        <dt className="text-gray-500">Árvores Detectadas</dt>
+                        <dt className="text-gray-500">Arvores Detectadas (YOLO)</dt>
                         <dd className="text-white">{(objectDetection as any).total_detections}</dd>
                       </div>
+                    )}
+                    {objectDetection && (objectDetection as any)?.avg_confidence !== undefined && (
+                      <div className="flex justify-between pl-4">
+                        <dt className="text-gray-500">Confianca Media</dt>
+                        <dd className="text-white">{(((objectDetection as any).avg_confidence) * 100).toFixed(1)}%</dd>
+                      </div>
+                    )}
+                    {objectDetection && (objectDetection as any)?.by_class && Object.keys((objectDetection as any).by_class).length > 0 && (
+                      <>
+                        {Object.entries((objectDetection as any).by_class).map(([cls, count]: [string, any]) => (
+                          <div key={cls} className="flex justify-between pl-4">
+                            <dt className="text-gray-500">{cls}</dt>
+                            <dd className="text-white">{count}</dd>
+                          </div>
+                        ))}
+                      </>
                     )}
                     {sceneClassification && (sceneClassification as any)?.land_use_percentages && (
                       <>
                         <dt className="text-gray-500 mt-2">Classificacao de Uso do Solo:</dt>
                         {Object.entries((sceneClassification as any).land_use_percentages)
                           .sort(([, a]: any, [, b]: any) => b - a)
-                          .slice(0, 5)
                           .map(([cls, pct]: [string, any]) => (
                           <div key={cls} className="flex justify-between pl-4">
                             <dt className="text-gray-500">{cls.replace(/_/g, ' ')}</dt>
@@ -1696,6 +1730,196 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                       </>
                     )}
                   </dl>
+                </div>
+              )}
+
+              {/* Visual Features in Report */}
+              {visualFeatures && (
+                <div className="bg-gray-800/50 rounded-lg p-6 mb-6">
+                  <h5 className="text-white font-medium mb-3">Caracteristicas Visuais</h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {(visualFeatures as any)?.texture && (
+                      <div>
+                        <p className="text-gray-500 text-xs uppercase mb-2">Textura</p>
+                        <dl className="space-y-1 text-sm">
+                          {Object.entries((visualFeatures as any).texture).map(([key, val]: [string, any]) => (
+                            <div key={key} className="flex justify-between">
+                              <dt className="text-gray-500">{key.replace(/_/g, ' ')}</dt>
+                              <dd className="text-white">{typeof val === 'number' ? val.toFixed(4) : String(val)}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    )}
+                    {(visualFeatures as any)?.colors && (
+                      <div>
+                        <p className="text-gray-500 text-xs uppercase mb-2">Cores Dominantes</p>
+                        <dl className="space-y-1 text-sm">
+                          {Object.entries((visualFeatures as any).colors).map(([key, val]: [string, any]) => (
+                            <div key={key} className="flex justify-between">
+                              <dt className="text-gray-500">{key.replace(/_/g, ' ')}</dt>
+                              <dd className="text-white">{typeof val === 'number' ? val.toFixed(4) : String(val)}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    )}
+                    {(visualFeatures as any)?.patterns && (
+                      <div>
+                        <p className="text-gray-500 text-xs uppercase mb-2">Padroes</p>
+                        <dl className="space-y-1 text-sm">
+                          {Object.entries((visualFeatures as any).patterns).map(([key, val]: [string, any]) => (
+                            <div key={key} className="flex justify-between">
+                              <dt className="text-gray-500">{key.replace(/_/g, ' ')}</dt>
+                              <dd className="text-white">{typeof val === 'number' ? val.toFixed(4) : String(val)}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Video Analysis in Report */}
+              {videoAnalysis && (
+                <div className="bg-gray-800/50 rounded-lg p-6 mb-6">
+                  <h5 className="text-white font-medium mb-3">Analise de Video</h5>
+                  <dl className="space-y-2 text-sm">
+                    {videoInfo && (
+                      <>
+                        <div className="flex justify-between">
+                          <dt className="text-gray-500">Resolucao</dt>
+                          <dd className="text-white">{(videoInfo as any)?.width}x{(videoInfo as any)?.height}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-gray-500">FPS / Duracao</dt>
+                          <dd className="text-white">{(videoInfo as any)?.fps} fps / {((videoInfo as any)?.duration_seconds ?? 0).toFixed(1)}s</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-gray-500">Frames Totais</dt>
+                          <dd className="text-white">{(videoInfo as any)?.frame_count}</dd>
+                        </div>
+                      </>
+                    )}
+                    {temporalSummary && (
+                      <>
+                        <div className="flex justify-between">
+                          <dt className="text-gray-500">Frames Analisados</dt>
+                          <dd className="text-white">{(temporalSummary as any)?.total_frames_analyzed}</dd>
+                        </div>
+                        {(temporalSummary as any)?.vegetation && (
+                          <>
+                            <div className="flex justify-between">
+                              <dt className="text-gray-500">Vegetacao Media</dt>
+                              <dd className="text-white">{((temporalSummary as any).vegetation.mean_percentage ?? 0).toFixed(1)}%</dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt className="text-gray-500">Vegetacao Min/Max</dt>
+                              <dd className="text-white">{((temporalSummary as any).vegetation.min_percentage ?? 0).toFixed(1)}% - {((temporalSummary as any).vegetation.max_percentage ?? 0).toFixed(1)}%</dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt className="text-gray-500">Tendencia</dt>
+                              <dd className="text-white">{(temporalSummary as any).vegetation.trend === 'increasing' ? 'Crescente' : (temporalSummary as any).vegetation.trend === 'decreasing' ? 'Decrescente' : 'Estavel'}</dd>
+                            </div>
+                          </>
+                        )}
+                        {(temporalSummary as any)?.health && (
+                          <div className="flex justify-between">
+                            <dt className="text-gray-500">Saude Media (Video)</dt>
+                            <dd className="text-white">{((temporalSummary as any).health.mean_index ?? 0).toFixed(1)}%</dd>
+                          </div>
+                        )}
+                        {(temporalSummary as any)?.land_use_average && Object.keys((temporalSummary as any).land_use_average).length > 0 && (
+                          <>
+                            <dt className="text-gray-500 mt-2">Uso do Solo Medio (Video):</dt>
+                            {Object.entries((temporalSummary as any).land_use_average)
+                              .sort(([, a]: any, [, b]: any) => b - a)
+                              .map(([cls, pct]: [string, any]) => (
+                              <div key={cls} className="flex justify-between pl-4">
+                                <dt className="text-gray-500">{cls.replace(/_/g, ' ')}</dt>
+                                <dd className="text-white">{typeof pct === 'number' ? pct.toFixed(1) : pct}%</dd>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </dl>
+                </div>
+              )}
+
+              {/* Per-Analysis Breakdown */}
+              {analyses.length > 0 && (
+                <div className="bg-gray-800/50 rounded-lg p-6 mb-6">
+                  <h5 className="text-white font-medium mb-3">Historico Completo de Analises ({analyses.length})</h5>
+                  <div className="space-y-4">
+                    {analyses.map((a) => (
+                      <div key={a.id} className="border border-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-white text-sm font-medium">
+                            {a.analysis_type === 'full_report' ? 'Analise Completa (ML)' :
+                             a.analysis_type === 'video_analysis' ? 'Analise de Video' :
+                             a.analysis_type === 'vegetation_coverage' ? 'Cobertura Vegetal' :
+                             a.analysis_type === 'plant_health' ? 'Saude das Plantas' :
+                             a.analysis_type === 'color_analysis' ? 'Analise de Cores' :
+                             a.analysis_type === 'object_detection' ? 'Deteccao YOLO' :
+                             a.analysis_type === 'land_use' ? 'Uso do Solo' :
+                             a.analysis_type === 'feature_extraction' ? 'Features Visuais' :
+                             a.analysis_type}
+                          </span>
+                          <span className="text-gray-500 text-xs">
+                            {a.processing_time_seconds ? `${a.processing_time_seconds.toFixed(1)}s · ` : ''}
+                            {new Date(a.created_at).toLocaleString('pt-BR')}
+                          </span>
+                        </div>
+                        {a.results && (
+                          <dl className="space-y-1 text-xs">
+                            {Object.entries(a.results)
+                              .filter(([key]) => !['ml_errors', 'output_files'].includes(key))
+                              .map(([key, val]) => {
+                                if (typeof val === 'object' && val !== null) {
+                                  // Show sub-keys for nested objects
+                                  return Object.entries(val as Record<string, unknown>).map(([subKey, subVal]) => (
+                                    <div key={`${key}-${subKey}`} className="flex justify-between">
+                                      <dt className="text-gray-500">{key.replace(/_/g, ' ')} &gt; {subKey.replace(/_/g, ' ')}</dt>
+                                      <dd className="text-white text-right max-w-[60%] truncate">
+                                        {typeof subVal === 'number' ? subVal.toFixed(2) :
+                                         typeof subVal === 'object' ? JSON.stringify(subVal).slice(0, 80) :
+                                         String(subVal)}
+                                      </dd>
+                                    </div>
+                                  ))
+                                }
+                                return (
+                                  <div key={key} className="flex justify-between">
+                                    <dt className="text-gray-500">{key.replace(/_/g, ' ')}</dt>
+                                    <dd className="text-white">{typeof val === 'number' ? val.toFixed(2) : String(val)}</dd>
+                                  </div>
+                                )
+                              })}
+                          </dl>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Alerts in Report */}
+              {alerts.length > 0 && (
+                <div className="bg-gray-800/50 rounded-lg p-6 mb-6">
+                  <h5 className="text-white font-medium mb-3">Alertas de Saude</h5>
+                  <div className="space-y-2">
+                    {alerts.map((alert, idx) => (
+                      <div key={idx} className="flex justify-between text-sm">
+                        <span className={alert.severity === 'critical' ? 'text-red-400' : 'text-yellow-400'}>
+                          {alert.severity === 'critical' ? 'CRITICO' : 'AVISO'}: {alert.message}
+                        </span>
+                        <span className="text-gray-500">Valor: {alert.current_value.toFixed(1)} (limite: {alert.threshold})</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -1754,6 +1978,9 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
           onRefresh?.()
         }}
         project={project}
+        description={project.description}
+        latitude={project.latitude}
+        longitude={project.longitude}
       />
     </div>
   )

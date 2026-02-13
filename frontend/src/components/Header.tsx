@@ -19,6 +19,7 @@ import {
   Clock,
   Trash2
 } from 'lucide-react'
+import { useNotifications, type AppNotification } from './NotificationContext'
 
 interface UserData {
   id: number
@@ -26,13 +27,9 @@ interface UserData {
   email: string
 }
 
-interface Notification {
+interface SearchableProject {
   id: string
-  type: 'success' | 'warning' | 'info' | 'error'
-  title: string
-  message: string
-  time: string
-  read: boolean
+  name: string
 }
 
 interface HeaderProps {
@@ -40,28 +37,25 @@ interface HeaderProps {
   subtitle?: string
   currentUser?: UserData | null
   onLogout?: () => void
+  onNavigate?: (view: string) => void
+  onProjectSelect?: (projectId: string) => void
+  projects?: SearchableProject[]
   compact?: boolean // Modo compacto para uso junto com header mobile
+  theme?: 'dark' | 'light' | 'system'
+  onThemeToggle?: () => void
 }
 
-// Notificações - inicialmente vazio, serão adicionadas conforme ações do usuário
-const mockNotifications: Notification[] = []
-
-// Sugestões de busca - serão populadas com base no histórico do usuário
-const searchSuggestions: string[] = []
-
-export default function Header({ title, subtitle, currentUser, onLogout, compact = false }: HeaderProps) {
-  const [darkMode, setDarkMode] = useState(true)
+export default function Header({ title, subtitle, currentUser, onLogout, onNavigate, onProjectSelect, projects = [], compact = false, theme = 'dark', onThemeToggle }: HeaderProps) {
+  const isDark = theme !== 'light'
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [notifications, setNotifications] = useState(mockNotifications)
+  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications()
 
   const userMenuRef = useRef<HTMLDivElement>(null)
   const notificationRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
-
-  const unreadCount = notifications.filter(n => !n.read).length
 
   // Fechar menus ao clicar fora
   useEffect(() => {
@@ -106,21 +100,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
       .toUpperCase()
   }
 
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-  }
-
-  const markAsRead = (id: string) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === id ? { ...n, read: true } : n))
-    )
-  }
-
-  const deleteNotification = (id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id))
-  }
-
-  const getNotificationIcon = (type: Notification['type']) => {
+  const getNotificationIcon = (type: AppNotification['type']) => {
     switch (type) {
       case 'success':
         return <CheckCircle size={18} className="text-green-400" />
@@ -133,9 +113,14 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
     }
   }
 
-  const filteredSuggestions = searchSuggestions.filter(s =>
-    s.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredProjects = searchQuery.trim()
+    ? projects.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : []
+
+  const handleNavClick = (view: string) => {
+    setShowUserMenu(false)
+    onNavigate?.(view)
+  }
 
   // Se for modo compacto, renderiza apenas os botões de ação
   if (compact || !title) {
@@ -164,10 +149,11 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
 
         {/* Botões de ação compactos */}
         <button
-          onClick={() => setDarkMode(!darkMode)}
+          onClick={onThemeToggle}
           className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-gray-700/30 transition-all"
+          title="Alternar tema"
         >
-          {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+          {isDark ? <Sun size={20} /> : <Moon size={20} />}
         </button>
 
         <div className="relative" ref={notificationRef}>
@@ -235,7 +221,10 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
                 <p className="text-gray-500 text-xs truncate">{currentUser.email}</p>
               </div>
               <div className="p-1">
-                <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700/30 rounded-lg">
+                <button
+                  onClick={() => handleNavClick('settings')}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700/30 rounded-lg"
+                >
                   <Settings size={16} /> Configurações
                 </button>
                 <button
@@ -290,50 +279,33 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
             )}
           </div>
 
-          {/* Dropdown de sugestões */}
-          {showSearch && (
+          {/* Dropdown de resultados */}
+          {showSearch && searchQuery.trim() && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu">
-              {searchQuery ? (
-                <>
-                  <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-700/30">
-                    Resultados para "{searchQuery}"
-                  </div>
-                  {filteredSuggestions.length > 0 ? (
-                    <div className="py-2">
-                      {filteredSuggestions.map((suggestion, i) => (
-                        <button
-                          key={i}
-                          className="w-full px-4 py-2.5 flex items-center gap-3 text-left text-gray-300 hover:bg-gray-700/30 transition-colors"
-                        >
-                          <Search size={14} className="text-gray-500" />
-                          <span>{suggestion}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="px-4 py-8 text-center text-gray-500">
-                      Nenhum resultado encontrado
-                    </div>
-                  )}
-                </>
+              <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-700/30">
+                Resultados para &quot;{searchQuery}&quot;
+              </div>
+              {filteredProjects.length > 0 ? (
+                <div className="py-2 max-h-64 overflow-y-auto">
+                  {filteredProjects.slice(0, 8).map(project => (
+                    <button
+                      key={project.id}
+                      onClick={() => {
+                        onProjectSelect?.(project.id)
+                        setSearchQuery('')
+                        setShowSearch(false)
+                      }}
+                      className="w-full px-4 py-2.5 flex items-center gap-3 text-left text-gray-300 hover:bg-gray-700/30 transition-colors"
+                    >
+                      <FileText size={14} className="text-[#6AAF3D]" />
+                      <span>{project.name}</span>
+                    </button>
+                  ))}
+                </div>
               ) : (
-                <>
-                  <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-700/30">
-                    Pesquisas recentes
-                  </div>
-                  <div className="py-2">
-                    {searchSuggestions.slice(0, 4).map((suggestion, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setSearchQuery(suggestion)}
-                        className="w-full px-4 py-2.5 flex items-center gap-3 text-left text-gray-300 hover:bg-gray-700/30 transition-colors"
-                      >
-                        <Clock size={14} className="text-gray-500" />
-                        <span>{suggestion}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
+                <div className="px-4 py-8 text-center text-gray-500">
+                  Nenhum projeto encontrado
+                </div>
               )}
             </div>
           )}
@@ -346,7 +318,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
         <div className="flex items-center gap-1">
           {/* Toggle tema */}
           <button
-            onClick={() => setDarkMode(!darkMode)}
+            onClick={onThemeToggle}
             className="relative p-2.5 text-gray-400 hover:text-white rounded-xl hover:bg-gray-700/30 transition-all duration-300 group"
             title="Alternar tema"
           >
@@ -354,13 +326,13 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
               <Sun
                 size={20}
                 className={`absolute inset-0 transition-all duration-300 ${
-                  darkMode ? 'opacity-100 rotate-0' : 'opacity-0 rotate-90'
+                  isDark ? 'opacity-100 rotate-0' : 'opacity-0 rotate-90'
                 }`}
               />
               <Moon
                 size={20}
                 className={`absolute inset-0 transition-all duration-300 ${
-                  darkMode ? 'opacity-0 -rotate-90' : 'opacity-100 rotate-0'
+                  isDark ? 'opacity-0 -rotate-90' : 'opacity-100 rotate-0'
                 }`}
               />
             </div>
@@ -455,11 +427,16 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
                   )}
                 </div>
 
-                <div className="p-3 border-t border-gray-700/30">
-                  <button className="w-full py-2 text-sm text-[#6AAF3D] hover:bg-[#6AAF3D]/10 rounded-lg transition-colors">
-                    Ver todas as notificações
-                  </button>
-                </div>
+                {notifications.length > 0 && (
+                  <div className="p-3 border-t border-gray-700/30">
+                    <button
+                      onClick={() => { clearAll(); setShowNotifications(false) }}
+                      className="w-full py-2 text-sm text-gray-500 hover:text-red-400 hover:bg-red-900/10 rounded-lg transition-colors"
+                    >
+                      Limpar todas
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -516,19 +493,31 @@ export default function Header({ title, subtitle, currentUser, onLogout, compact
 
                 {/* Opções do menu */}
                 <div className="p-2">
-                  <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleNavClick('settings')}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                  >
                     <User size={18} />
                     <span>Meu Perfil</span>
                   </button>
-                  <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleNavClick('settings')}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                  >
                     <Settings size={18} />
                     <span>Configurações</span>
                   </button>
-                  <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleNavClick('reports')}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                  >
                     <FileText size={18} />
                     <span>Meus Relatórios</span>
                   </button>
-                  <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleNavClick('help')}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                  >
                     <HelpCircle size={18} />
                     <span>Ajuda e Suporte</span>
                   </button>
