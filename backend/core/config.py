@@ -81,5 +81,9 @@ class Settings(BaseSettings):
 # Instância global de configurações
 settings = Settings()
 
+# Validar SECRET_KEY em produção
+if settings.ENVIRONMENT != "development" and "change-in-production" in settings.SECRET_KEY:
+    raise RuntimeError("SECRET_KEY must be changed for production!")
+
 # Criar diretório de uploads se não existir
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)

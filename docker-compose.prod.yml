@@ -60,7 +60,7 @@ services:
       dockerfile: docker/Dockerfile.backend
     container_name: roboroca-backend
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-roboroca}:${POSTGRES_PASSWORD:-roboroca123}@db:5432/${POSTGRES_DB:-roboroca}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-roboroca}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-roboroca}
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
       - ENVIRONMENT=production
@@ -85,7 +85,7 @@ services:
       dockerfile: docker/Dockerfile.celery
     container_name: roboroca-celery
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-roboroca}:${POSTGRES_PASSWORD:-roboroca123}@db:5432/${POSTGRES_DB:-roboroca}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-roboroca}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-roboroca}
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY}
       - ENVIRONMENT=production
@@ -109,7 +109,7 @@ services:
     container_name: roboroca-db
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-roboroca}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-roboroca123}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=${POSTGRES_DB:-roboroca}
     volumes:
       - postgres_data:/var/lib/postgresql/data

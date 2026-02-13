@@ -466,6 +466,13 @@ export function getImageThumbnailUrl(imageId: number): string {
 }
 
 /**
+ * Obter metadados de uma imagem (EXIF, GPS, etc.)
+ */
+export async function getImageMetadata(imageId: number): Promise<Record<string, unknown>> {
+  return apiRequest(`/images/${imageId}/metadata`)
+}
+
+/**
  * Excluir imagem
  */
 export async function deleteImage(id: number): Promise<void> {
@@ -1004,8 +1011,59 @@ export async function getProjectTimeline(projectId: number): Promise<{
 }
 
 // ============================================
-// ANNOTATIONS - GeoJSON Export
+// ANNOTATIONS - CRUD + GeoJSON Export
 // ============================================
+
+export interface AnnotationData {
+  id: number
+  image_id: number
+  annotation_type: string
+  data: Record<string, unknown>
+  created_by?: number
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Listar anotacoes de uma imagem
+ */
+export async function getAnnotations(imageId: number): Promise<{ annotations: AnnotationData[]; total: number }> {
+  return apiRequest(`/annotations/?image_id=${imageId}`)
+}
+
+/**
+ * Criar nova anotacao
+ */
+export async function createAnnotation(
+  imageId: number,
+  annotationType: string,
+  data: Record<string, unknown>
+): Promise<AnnotationData> {
+  return apiRequest('/annotations/', {
+    method: 'POST',
+    body: JSON.stringify({ image_id: imageId, annotation_type: annotationType, data }),
+  })
+}
+
+/**
+ * Atualizar anotacao existente
+ */
+export async function updateAnnotation(
+  id: number,
+  data: { data?: Record<string, unknown>; annotation_type?: string }
+): Promise<AnnotationData> {
+  return apiRequest(`/annotations/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Excluir anotacao
+ */
+export async function deleteAnnotationApi(id: number): Promise<void> {
+  return apiRequest(`/annotations/${id}`, { method: 'DELETE' })
+}
 
 /**
  * Exportar anotacoes como GeoJSON

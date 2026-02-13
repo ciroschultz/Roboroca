@@ -26,6 +26,7 @@ import {
   Loader2,
   Video,
   Cpu,
+  Pencil,
 } from 'lucide-react'
 import {
   DonutChart,
@@ -43,6 +44,7 @@ import {
   getProjectAlerts,
   downloadAnalysisPDF,
   analyzeProject,
+  deleteProject,
   type Analysis,
   type EnrichedData,
   type WeatherData,
@@ -53,6 +55,9 @@ import {
   type AlertItem,
 } from '@/lib/api'
 import { useToast } from './Toast'
+import { useConfirmDialog } from './ConfirmDialog'
+import ImageAnalysisPanel from './ImageAnalysisPanel'
+import ProjectEditModal from './ProjectEditModal'
 
 interface ProjectData {
   id: string
@@ -111,6 +116,9 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const toast = useToast()
+  const { confirm } = useConfirmDialog()
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
   useEffect(() => {
@@ -457,6 +465,13 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+                <button
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="p-1.5 hover:bg-gray-700/50 text-gray-400 hover:text-white rounded-lg transition-colors"
+                  title="Editar projeto"
+                >
+                  <Pencil size={16} />
+                </button>
                 {getStatusBadge()}
               </div>
               <div className="flex items-center gap-4 mt-1 text-sm text-gray-400">
@@ -496,8 +511,32 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
               )}
               Baixar Relatorio
             </button>
-            <button className="p-2 hover:bg-red-900/30 text-gray-400 hover:text-red-400 rounded-lg transition-colors">
-              <Trash2 size={18} />
+            <button
+              onClick={() => {
+                confirm({
+                  title: 'Excluir Projeto',
+                  message: `Tem certeza que deseja excluir o projeto "${project.name}"? Todas as imagens e analises serao perdidas.`,
+                  confirmText: 'Excluir',
+                  type: 'danger',
+                  onConfirm: async () => {
+                    setIsDeleting(true)
+                    try {
+                      await deleteProject(Number(project.id))
+                      toast.success('Projeto excluido', 'O projeto foi removido com sucesso')
+                      onRefresh?.()
+                      onBack()
+                    } catch (err: any) {
+                      toast.error('Erro ao excluir', err?.detail || 'Falha ao excluir o projeto')
+                    } finally {
+                      setIsDeleting(false)
+                    }
+                  },
+                })
+              }}
+              disabled={isDeleting}
+              className="p-2 hover:bg-red-900/30 text-gray-400 hover:text-red-400 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {isDeleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
             </button>
           </div>
         </div>
@@ -1171,6 +1210,22 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
         ) : activeTab === 'analysis' ? (
           /* Aba de Analise ML */
           <div className="space-y-6">
+            {/* Analise por Imagem - Novo painel */}
+            <ImageAnalysisPanel
+              projectId={Number(project.id)}
+              onAnalysisComplete={() => {
+                fetchAnalyses()
+                onRefresh?.()
+              }}
+            />
+
+            {/* Separador */}
+            <div className="flex items-center gap-4">
+              <div className="flex-1 h-px bg-gray-700/50" />
+              <span className="text-gray-500 text-xs uppercase tracking-wider">Resultados Agregados do Projeto</span>
+              <div className="flex-1 h-px bg-gray-700/50" />
+            </div>
+
             {/* Botoes de acao */}
             <div className="flex flex-wrap gap-3 pb-4 border-b border-gray-700/50">
               <button
@@ -1690,6 +1745,16 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
           </div>
         ) : null}
       </div>
+
+      {/* Edit Modal */}
+      <ProjectEditModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        onSaved={() => {
+          onRefresh?.()
+        }}
+        project={project}
+      />
     </div>
   )
 }

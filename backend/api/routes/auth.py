@@ -185,7 +185,7 @@ async def request_password_reset(
     await db.commit()
 
     # Log reset URL to console (no email service)
-    reset_url = f"http://localhost:3000/reset-password?token={token}"
+    reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
     logger.warning("PASSWORD RESET URL for %s: %s", user.email, reset_url)
 
     return {"message": "Se o email estiver cadastrado, você receberá instruções para redefinir sua senha."}

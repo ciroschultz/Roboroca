@@ -1,7 +1,20 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { API_BASE_URL, loadAuthToken, exportAnnotationsGeoJSON } from '@/lib/api'
+import {
+  API_BASE_URL,
+  loadAuthToken,
+  exportAnnotationsGeoJSON,
+  getProjects as apiGetProjects,
+  getImages as apiGetImages,
+  getProjectAnalysisSummary,
+  getAnalyses as apiGetAnalyses,
+  getAnnotations as apiGetAnnotations,
+  createAnnotation as apiCreateAnnotation,
+  deleteAnnotationApi,
+  updateAnnotation as apiUpdateAnnotation,
+  type Project as ApiProject,
+} from '@/lib/api'
 import {
   Layers,
   ZoomIn,
@@ -63,7 +76,7 @@ interface ProjectImage {
   id: number
   filename: string
   original_filename: string
-  file_path: string
+  file_path?: string
   width?: number
   height?: number
   center_lat?: number
@@ -264,24 +277,26 @@ export default function MapView({ projectId }: MapViewProps) {
     setError(null)
 
     try {
-      const response = await fetch(`${API_BASE_URL}/projects/`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setError('Sessão expirada. Faça login novamente.')
-          return
-        }
-        throw new Error('Erro ao carregar projetos')
+      const data = await apiGetProjects(0, 100)
+      setProjects((data.projects || []).map((p: ApiProject) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        status: p.status,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        total_area_ha: p.total_area_ha,
+        area_hectares: p.area_hectares,
+        image_count: p.image_count,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      })))
+    } catch (err: any) {
+      if (err?.status === 401) {
+        setError('Sessão expirada. Faça login novamente.')
+      } else {
+        setError('Erro ao carregar projetos. Verifique se o backend está rodando.')
       }
-
-      const data = await response.json()
-      setProjects(data.projects || [])
-    } catch (err) {
-      setError('Erro ao carregar projetos. Verifique se o backend está rodando.')
       console.error(err)
     } finally {
       setLoading(false)
@@ -290,21 +305,10 @@ export default function MapView({ projectId }: MapViewProps) {
 
   // Fetch project images
   const fetchProjectImages = async (projectId: number) => {
-    const token = getAuthToken()
-    if (!token) return
-
     try {
-      const response = await fetch(`${API_BASE_URL}/images/?project_id=${projectId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setProjectImages(data.images || [])
-        setSelectedImageIndex(0)
-      }
+      const data = await apiGetImages(projectId, 0, 200)
+      setProjectImages(data.images || [])
+      setSelectedImageIndex(0)
     } catch (err) {
       console.error('Erro ao carregar imagens:', err)
     }
@@ -312,20 +316,9 @@ export default function MapView({ projectId }: MapViewProps) {
 
   // Fetch analysis summary
   const fetchAnalysisSummary = async (projectId: number) => {
-    const token = getAuthToken()
-    if (!token) return
-
     try {
-      const response = await fetch(`${API_BASE_URL}/projects/${projectId}/analysis-summary`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setAnalysisSummary(data)
-      }
+      const data = await getProjectAnalysisSummary(projectId)
+      setAnalysisSummary(data as any)
     } catch (err) {
       console.error('Erro ao carregar análise:', err)
       setAnalysisSummary(null)
@@ -334,29 +327,18 @@ export default function MapView({ projectId }: MapViewProps) {
 
   // Fetch image analysis
   const fetchImageAnalysis = async (imageId: number) => {
-    const token = getAuthToken()
-    if (!token) return
-
     try {
-      const response = await fetch(`${API_BASE_URL}/analysis/?image_id=${imageId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        const fullAnalysis = data.analyses?.find((a: any) => a.analysis_type === 'full_report' && a.status === 'completed')
-        if (fullAnalysis?.results) {
-          setImageAnalysis({
-            vegetation_coverage: fullAnalysis.results.vegetation_coverage,
-            vegetation_health: fullAnalysis.results.vegetation_health,
-            object_detection: fullAnalysis.results.object_detection,
-            vegetation_type: fullAnalysis.results.vegetation_type,
-          })
-        } else {
-          setImageAnalysis(null)
-        }
+      const data = await apiGetAnalyses(imageId, undefined, undefined, 0, 100)
+      const fullAnalysis = data.analyses?.find((a: any) => a.analysis_type === 'full_report' && a.status === 'completed')
+      if (fullAnalysis?.results) {
+        setImageAnalysis({
+          vegetation_coverage: fullAnalysis.results.vegetation_coverage as any,
+          vegetation_health: fullAnalysis.results.vegetation_health as any,
+          object_detection: fullAnalysis.results.object_detection as any,
+          vegetation_type: fullAnalysis.results.vegetation_type as any,
+        })
+      } else {
+        setImageAnalysis(null)
       }
     } catch (err) {
       console.error('Erro ao carregar analise da imagem:', err)
@@ -366,24 +348,13 @@ export default function MapView({ projectId }: MapViewProps) {
 
   // Fetch annotations for image
   const fetchAnnotations = async (imageId: number) => {
-    const token = getAuthToken()
-    if (!token) return
-
     try {
-      const response = await fetch(`${API_BASE_URL}/annotations/?image_id=${imageId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setAnnotations(data.annotations?.map((a: any) => ({
-          id: a.id,
-          type: a.annotation_type,
-          data: a.data,
-        })) || [])
-      }
+      const data = await apiGetAnnotations(imageId)
+      setAnnotations(data.annotations?.map((a: any) => ({
+        id: a.id,
+        type: a.annotation_type,
+        data: a.data,
+      })) || [])
     } catch (err) {
       console.error('Erro ao carregar anotacoes:', err)
       setAnnotations([])
@@ -414,29 +385,17 @@ export default function MapView({ projectId }: MapViewProps) {
 
   // Save annotation
   const saveAnnotation = async (annotation: Annotation) => {
-    const token = getAuthToken()
-    if (!token || !projectImages[selectedImageIndex]) return
+    if (!projectImages[selectedImageIndex]) return
 
     setSavingAnnotation(true)
     try {
-      const response = await fetch(`${API_BASE_URL}/annotations/`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          image_id: projectImages[selectedImageIndex].id,
-          annotation_type: annotation.type,
-          data: annotation.data,
-        }),
-      })
-
-      if (response.ok) {
-        const saved = await response.json()
-        setAnnotations(prev => [...prev.filter(a => a.isNew !== true), { id: saved.id, type: saved.annotation_type, data: saved.data }])
-        setCurrentAnnotation(null)
-      }
+      const saved = await apiCreateAnnotation(
+        projectImages[selectedImageIndex].id,
+        annotation.type,
+        annotation.data as Record<string, unknown>,
+      )
+      setAnnotations(prev => [...prev.filter(a => a.isNew !== true), { id: saved.id, type: saved.annotation_type, data: saved.data as any }])
+      setCurrentAnnotation(null)
     } catch (err) {
       console.error('Erro ao salvar anotacao:', err)
     } finally {
@@ -446,20 +405,9 @@ export default function MapView({ projectId }: MapViewProps) {
 
   // Delete annotation
   const deleteAnnotation = async (annotationId: number) => {
-    const token = getAuthToken()
-    if (!token) return
-
     try {
-      const response = await fetch(`${API_BASE_URL}/annotations/${annotationId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        setAnnotations(prev => prev.filter(a => a.id !== annotationId))
-      }
+      await deleteAnnotationApi(annotationId)
+      setAnnotations(prev => prev.filter(a => a.id !== annotationId))
     } catch (err) {
       console.error('Erro ao deletar anotacao:', err)
     }
