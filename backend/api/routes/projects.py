@@ -1238,6 +1238,117 @@ async def get_project_analysis_summary(
     }
 
 
+@router.get("/{project_id}/timeline")
+async def get_project_timeline(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obter evolução temporal do projeto.
+
+    Agrupa análises completas por semana ISO e retorna
+    médias de cobertura, saúde e contagem de árvores por período.
+    """
+    # Verificar projeto
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Projeto não encontrado"
+        )
+
+    # Buscar análises completas
+    analyses_result = await db.execute(
+        select(Analysis)
+        .join(Image, Analysis.image_id == Image.id)
+        .where(
+            Image.project_id == project_id,
+            Analysis.analysis_type == "full_report",
+            Analysis.status == "completed"
+        )
+        .order_by(Analysis.completed_at)
+    )
+    analyses = analyses_result.scalars().all()
+
+    if not analyses:
+        return {"project_id": project_id, "timeline": []}
+
+    # Group by ISO week
+    weeks: dict[str, dict] = {}
+
+    for analysis in analyses:
+        if not analysis.results or not analysis.completed_at:
+            continue
+
+        results = analysis.results
+        week_key = analysis.completed_at.strftime("%G-W%V")
+
+        if week_key not in weeks:
+            weeks[week_key] = {
+                "coverages": [],
+                "health_indices": [],
+                "tree_counts": [],
+                "date": analysis.completed_at.isoformat(),
+            }
+
+        # Extract coverage
+        if "vegetation_coverage" in results:
+            weeks[week_key]["coverages"].append(
+                results["vegetation_coverage"].get("vegetation_percentage", 0)
+            )
+        elif "coverage" in results:
+            weeks[week_key]["coverages"].append(
+                results["coverage"].get("vegetation_percentage", 0)
+            )
+
+        # Extract health
+        if "vegetation_health" in results:
+            weeks[week_key]["health_indices"].append(
+                results["vegetation_health"].get("health_index", 0)
+            )
+        elif "health" in results:
+            weeks[week_key]["health_indices"].append(
+                results["health"].get("health_index", 0)
+            )
+
+        # Extract tree count
+        if "tree_count" in results:
+            weeks[week_key]["tree_counts"].append(
+                results["tree_count"].get("total_trees", 0)
+            )
+        elif "object_detection" in results:
+            det = results["object_detection"]
+            if "by_class" in det and "arvore" in det["by_class"]:
+                weeks[week_key]["tree_counts"].append(det["by_class"]["arvore"])
+
+    # Build timeline
+    timeline = []
+    for week_key in sorted(weeks.keys()):
+        data = weeks[week_key]
+        entry = {
+            "periodo": week_key,
+            "date": data["date"],
+        }
+        if data["coverages"]:
+            entry["cobertura"] = round(sum(data["coverages"]) / len(data["coverages"]), 2)
+        if data["health_indices"]:
+            entry["saude"] = round(sum(data["health_indices"]) / len(data["health_indices"]), 2)
+        if data["tree_counts"]:
+            entry["arvores"] = round(sum(data["tree_counts"]) / len(data["tree_counts"]))
+
+        timeline.append(entry)
+
+    return {"project_id": project_id, "timeline": timeline}
+
+
 @router.get("/{project_id}/enriched-data")
 async def get_project_enriched_data(
     project_id: int,

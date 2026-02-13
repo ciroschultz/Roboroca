@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
-  User,
+  User as UserIcon,
   Bell,
   Shield,
   Palette,
@@ -17,31 +17,184 @@ import {
   Check,
   Moon,
   Sun,
-  Monitor
+  Monitor,
+  Loader2,
+  X,
+  Eye,
+  EyeOff,
+  AlertCircle,
 } from 'lucide-react'
-
-interface UserData {
-  id: number
-  name: string
-  email: string
-}
+import {
+  updateUserProfile,
+  updateUserPreferences,
+  changePassword,
+  getCurrentUser,
+  type User,
+  type UpdateProfileData,
+} from '@/lib/api'
+import { useToast } from './Toast'
 
 interface SettingsPageProps {
-  currentUser?: UserData | null
+  currentUser?: User | null
+  onUserUpdate?: (user: User) => void
 }
 
 type SettingsSection = 'profile' | 'notifications' | 'appearance' | 'security' | 'language' | 'storage'
 
-export default function SettingsPage({ currentUser }: SettingsPageProps) {
+export default function SettingsPage({ currentUser, onUserUpdate }: SettingsPageProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
+  const toast = useToast()
+
+  // Profile form state
+  const [fullName, setFullName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [company, setCompany] = useState('')
+  const [bio, setBio] = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
+
+  // Preferences state
   const [theme, setTheme] = useState<'dark' | 'light' | 'system'>('dark')
   const [emailNotifications, setEmailNotifications] = useState(true)
   const [pushNotifications, setPushNotifications] = useState(true)
   const [weeklyReport, setWeeklyReport] = useState(false)
   const [language, setLanguage] = useState('pt-BR')
 
+  // Password change modal
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+
+  // Load user data into form
+  const loadUserData = useCallback((user: User) => {
+    setFullName(user.name || '')
+    setPhone(user.phone || '')
+    setCompany(user.company || '')
+    setBio(user.bio || '')
+    setTheme((user.theme as 'dark' | 'light' | 'system') || 'dark')
+    setEmailNotifications(user.email_notifications ?? true)
+    setPushNotifications(user.push_notifications ?? true)
+    setWeeklyReport(user.weekly_report ?? false)
+    setLanguage(user.language || 'pt-BR')
+  }, [])
+
+  useEffect(() => {
+    if (currentUser) {
+      loadUserData(currentUser)
+    }
+  }, [currentUser, loadUserData])
+
+  // Fetch latest user data on mount
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const user = await getCurrentUser()
+        loadUserData(user)
+        onUserUpdate?.(user)
+      } catch {
+        // Ignore - will use passed currentUser
+      }
+    }
+    fetchUser()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleSaveProfile = async () => {
+    setProfileSaving(true)
+    try {
+      const data: UpdateProfileData = {
+        full_name: fullName,
+        phone,
+        bio,
+        company,
+      }
+      const updatedUser = await updateUserProfile(data)
+      onUserUpdate?.(updatedUser)
+      toast.success('Perfil atualizado com sucesso')
+    } catch (err: any) {
+      toast.error(err.detail || 'Erro ao salvar perfil')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  const handleToggleNotification = async (
+    field: 'email_notifications' | 'push_notifications' | 'weekly_report',
+    newValue: boolean
+  ) => {
+    // Optimistic update
+    if (field === 'email_notifications') setEmailNotifications(newValue)
+    if (field === 'push_notifications') setPushNotifications(newValue)
+    if (field === 'weekly_report') setWeeklyReport(newValue)
+
+    try {
+      const updatedUser = await updateUserPreferences({ [field]: newValue })
+      onUserUpdate?.(updatedUser)
+    } catch (err: any) {
+      // Revert on error
+      if (field === 'email_notifications') setEmailNotifications(!newValue)
+      if (field === 'push_notifications') setPushNotifications(!newValue)
+      if (field === 'weekly_report') setWeeklyReport(!newValue)
+      toast.error(err.detail || 'Erro ao atualizar preferência')
+    }
+  }
+
+  const handleThemeChange = async (newTheme: 'dark' | 'light' | 'system') => {
+    setTheme(newTheme)
+    try {
+      const updatedUser = await updateUserPreferences({ theme: newTheme })
+      onUserUpdate?.(updatedUser)
+    } catch (err: any) {
+      toast.error(err.detail || 'Erro ao atualizar tema')
+    }
+  }
+
+  const handleLanguageChange = async (newLang: string) => {
+    setLanguage(newLang)
+    try {
+      const updatedUser = await updateUserPreferences({ language: newLang })
+      onUserUpdate?.(updatedUser)
+    } catch (err: any) {
+      toast.error(err.detail || 'Erro ao atualizar idioma')
+    }
+  }
+
+  const handleChangePassword = async () => {
+    setPasswordError(null)
+    if (!currentPassword) {
+      setPasswordError('Insira a senha atual')
+      return
+    }
+    if (newPassword.length < 6) {
+      setPasswordError('A nova senha deve ter pelo menos 6 caracteres')
+      return
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('As senhas não coincidem')
+      return
+    }
+
+    setPasswordSaving(true)
+    try {
+      await changePassword(currentPassword, newPassword)
+      toast.success('Senha alterada com sucesso')
+      setShowPasswordModal(false)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmNewPassword('')
+    } catch (err: any) {
+      setPasswordError(err.detail || 'Erro ao alterar senha')
+    } finally {
+      setPasswordSaving(false)
+    }
+  }
+
   const sections = [
-    { id: 'profile' as const, label: 'Perfil', icon: User },
+    { id: 'profile' as const, label: 'Perfil', icon: UserIcon },
     { id: 'notifications' as const, label: 'Notificações', icon: Bell },
     { id: 'appearance' as const, label: 'Aparência', icon: Palette },
     { id: 'security' as const, label: 'Segurança', icon: Shield },
@@ -62,7 +215,7 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                 <div className="relative">
                   <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-[#6AAF3D] to-[#1B3A5C] flex items-center justify-center shadow-xl">
                     <span className="text-white text-3xl font-bold">
-                      {currentUser?.name.charAt(0).toUpperCase() || 'U'}
+                      {fullName.charAt(0).toUpperCase() || 'U'}
                     </span>
                   </div>
                   <button className="absolute -bottom-2 -right-2 p-2 bg-[#6AAF3D] rounded-xl text-white hover:bg-[#5a9a34] transition-colors shadow-lg">
@@ -70,7 +223,7 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   </button>
                 </div>
                 <div>
-                  <p className="text-white font-medium">{currentUser?.name || 'Usuário'}</p>
+                  <p className="text-white font-medium">{fullName || 'Usuário'}</p>
                   <p className="text-gray-500 text-sm">{currentUser?.email || 'email@exemplo.com'}</p>
                   <button className="mt-2 text-sm text-[#6AAF3D] hover:text-[#7abf4d] transition-colors">
                     Alterar foto
@@ -84,7 +237,8 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   <label className="block text-sm font-medium text-gray-400 mb-2">Nome completo</label>
                   <input
                     type="text"
-                    defaultValue={currentUser?.name || ''}
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
                     className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
                   />
                 </div>
@@ -92,14 +246,17 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   <label className="block text-sm font-medium text-gray-400 mb-2">Email</label>
                   <input
                     type="email"
-                    defaultValue={currentUser?.email || ''}
-                    className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
+                    value={currentUser?.email || ''}
+                    disabled
+                    className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-gray-500 cursor-not-allowed"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-400 mb-2">Telefone</label>
                   <input
                     type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
                     placeholder="(00) 00000-0000"
                     className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
                   />
@@ -108,6 +265,8 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   <label className="block text-sm font-medium text-gray-400 mb-2">Empresa/Fazenda</label>
                   <input
                     type="text"
+                    value={company}
+                    onChange={(e) => setCompany(e.target.value)}
                     placeholder="Nome da sua propriedade"
                     className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
                   />
@@ -118,15 +277,21 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                 <label className="block text-sm font-medium text-gray-400 mb-2">Bio</label>
                 <textarea
                   rows={3}
+                  value={bio}
+                  onChange={(e) => setBio(e.target.value)}
                   placeholder="Conte um pouco sobre você ou sua propriedade..."
                   className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors resize-none"
                 />
               </div>
             </div>
 
-            <button className="flex items-center gap-2 px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white font-medium rounded-xl transition-colors btn-press">
-              <Save size={18} />
-              Salvar alterações
+            <button
+              onClick={handleSaveProfile}
+              disabled={profileSaving}
+              className="flex items-center gap-2 px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] disabled:opacity-50 text-white font-medium rounded-xl transition-colors btn-press"
+            >
+              {profileSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+              {profileSaving ? 'Salvando...' : 'Salvar alterações'}
             </button>
           </div>
         )
@@ -149,7 +314,7 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   </div>
                 </div>
                 <button
-                  onClick={() => setEmailNotifications(!emailNotifications)}
+                  onClick={() => handleToggleNotification('email_notifications', !emailNotifications)}
                   className={`relative w-14 h-8 rounded-full transition-colors ${
                     emailNotifications ? 'bg-[#6AAF3D]' : 'bg-gray-700'
                   }`}
@@ -174,7 +339,7 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   </div>
                 </div>
                 <button
-                  onClick={() => setPushNotifications(!pushNotifications)}
+                  onClick={() => handleToggleNotification('push_notifications', !pushNotifications)}
                   className={`relative w-14 h-8 rounded-full transition-colors ${
                     pushNotifications ? 'bg-[#6AAF3D]' : 'bg-gray-700'
                   }`}
@@ -199,7 +364,7 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                   </div>
                 </div>
                 <button
-                  onClick={() => setWeeklyReport(!weeklyReport)}
+                  onClick={() => handleToggleNotification('weekly_report', !weeklyReport)}
                   className={`relative w-14 h-8 rounded-full transition-colors ${
                     weeklyReport ? 'bg-[#6AAF3D]' : 'bg-gray-700'
                   }`}
@@ -230,9 +395,9 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
                 ].map((option) => (
                   <button
                     key={option.id}
-                    onClick={() => setTheme(option.id)}
+                    onClick={() => handleThemeChange(option.id)}
                     className={`
-                      flex flex-col items-center gap-2 p-4 rounded-xl border transition-all
+                      flex flex-col items-center gap-2 p-4 rounded-xl border transition-all relative
                       ${theme === option.id
                         ? 'bg-[#6AAF3D]/20 border-[#6AAF3D] text-[#6AAF3D]'
                         : 'bg-gray-800/30 border-gray-700/30 text-gray-400 hover:border-gray-600'
@@ -263,44 +428,51 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
             <h3 className="text-lg font-semibold text-white mb-4">Segurança</h3>
 
             <div className="space-y-4">
-              <button className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-gray-600 transition-colors group">
+              <button
+                onClick={() => {
+                  setShowPasswordModal(true)
+                  setPasswordError(null)
+                  setCurrentPassword('')
+                  setNewPassword('')
+                  setConfirmNewPassword('')
+                }}
+                className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-gray-600 transition-colors group"
+              >
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-blue-500/20 rounded-xl">
                     <Key className="text-blue-400" size={20} />
                   </div>
                   <div className="text-left">
                     <p className="text-white font-medium">Alterar senha</p>
-                    <p className="text-gray-500 text-sm">Última alteração há 30 dias</p>
+                    <p className="text-gray-500 text-sm">Altere sua senha de acesso</p>
                   </div>
                 </div>
                 <ChevronRight className="text-gray-500 group-hover:text-white transition-colors" size={20} />
               </button>
 
-              <button className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-gray-600 transition-colors group">
+              <div className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 opacity-60">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-green-500/20 rounded-xl">
                     <Shield className="text-green-400" size={20} />
                   </div>
                   <div className="text-left">
                     <p className="text-white font-medium">Autenticação em duas etapas</p>
-                    <p className="text-gray-500 text-sm">Não ativado</p>
+                    <p className="text-gray-500 text-sm">Em breve</p>
                   </div>
                 </div>
-                <ChevronRight className="text-gray-500 group-hover:text-white transition-colors" size={20} />
-              </button>
+              </div>
 
-              <button className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-gray-600 transition-colors group">
+              <div className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 opacity-60">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-purple-500/20 rounded-xl">
                     <Smartphone className="text-purple-400" size={20} />
                   </div>
                   <div className="text-left">
                     <p className="text-white font-medium">Dispositivos conectados</p>
-                    <p className="text-gray-500 text-sm">2 dispositivos ativos</p>
+                    <p className="text-gray-500 text-sm">Em breve</p>
                   </div>
                 </div>
-                <ChevronRight className="text-gray-500 group-hover:text-white transition-colors" size={20} />
-              </button>
+              </div>
             </div>
           </div>
         )
@@ -314,7 +486,7 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
               <label className="block text-sm font-medium text-gray-400 mb-2">Idioma do sistema</label>
               <select
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                onChange={(e) => handleLanguageChange(e.target.value)}
                 className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:outline-none focus:border-[#6AAF3D] transition-colors"
               >
                 <option value="pt-BR">Português (Brasil)</option>
@@ -352,41 +524,11 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
             <div className="p-4 bg-gray-800/30 rounded-xl border border-gray-700/30">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-white font-medium">Uso do armazenamento</span>
-                <span className="text-gray-400 text-sm">2.4 GB de 10 GB</span>
+                <span className="text-gray-400 text-sm">Em breve</span>
               </div>
               <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
-                <div className="h-full w-[24%] bg-gradient-to-r from-[#6AAF3D] to-[#5a9a34] rounded-full" />
+                <div className="h-full w-0 bg-gradient-to-r from-[#6AAF3D] to-[#5a9a34] rounded-full" />
               </div>
-              <div className="flex items-center gap-4 mt-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-[#6AAF3D]" />
-                  <span className="text-gray-400">Imagens (1.8 GB)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <span className="text-gray-400">Relatórios (0.6 GB)</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="space-y-3">
-              <button className="w-full flex items-center justify-between p-4 bg-gray-800/30 rounded-xl border border-gray-700/30 hover:border-gray-600 transition-colors group">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-blue-500/20 rounded-xl">
-                    <HardDrive className="text-blue-400" size={20} />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-white font-medium">Gerenciar arquivos</p>
-                    <p className="text-gray-500 text-sm">Ver e excluir arquivos antigos</p>
-                  </div>
-                </div>
-                <ChevronRight className="text-gray-500 group-hover:text-white transition-colors" size={20} />
-              </button>
-
-              <button className="w-full p-4 bg-[#6AAF3D]/20 hover:bg-[#6AAF3D]/30 border border-[#6AAF3D]/30 rounded-xl text-[#6AAF3D] font-medium transition-colors">
-                Aumentar armazenamento
-              </button>
             </div>
           </div>
         )
@@ -425,6 +567,98 @@ export default function SettingsPage({ currentUser }: SettingsPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Password Change Modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-white">Alterar Senha</h3>
+              <button
+                onClick={() => setShowPasswordModal(false)}
+                className="p-2 hover:bg-gray-700/50 rounded-lg transition-colors"
+              >
+                <X size={20} className="text-gray-400" />
+              </button>
+            </div>
+
+            {passwordError && (
+              <div className="flex items-center gap-3 p-3 mb-4 bg-red-900/20 border border-red-700/50 rounded-lg text-red-400 text-sm">
+                <AlertCircle size={16} className="shrink-0" />
+                <span>{passwordError}</span>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-2">Senha atual</label>
+                <div className="relative">
+                  <input
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="w-full px-4 py-3 pr-12 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
+                    placeholder="Sua senha atual"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                  >
+                    {showCurrentPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-2">Nova senha</label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full px-4 py-3 pr-12 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
+                    placeholder="Mínimo 6 caracteres"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                  >
+                    {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-2">Confirmar nova senha</label>
+                <input
+                  type="password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] transition-colors"
+                  placeholder="Repita a nova senha"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowPasswordModal(false)}
+                className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleChangePassword}
+                disabled={passwordSaving}
+                className="flex-1 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] disabled:opacity-50 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                {passwordSaving ? <Loader2 size={18} className="animate-spin" /> : <Key size={18} />}
+                {passwordSaving ? 'Salvando...' : 'Alterar Senha'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

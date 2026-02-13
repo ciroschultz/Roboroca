@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Mail, Lock, User, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react'
-import { login, register, LoginCredentials, RegisterData, User as UserType } from '@/lib/api'
+import { login, register, requestPasswordReset, LoginCredentials, RegisterData, User as UserType } from '@/lib/api'
 
 interface AuthScreenProps {
   onAuthSuccess: (user: UserType) => void
@@ -20,6 +20,25 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [resetSent, setResetSent] = useState(false)
+  const [resetLoading, setResetLoading] = useState(false)
+
+  const handleForgotPassword = async () => {
+    if (!email.trim() || !validateEmail(email)) {
+      setError('Por favor, insira um email válido para recuperar a senha')
+      return
+    }
+    setResetLoading(true)
+    setError(null)
+    try {
+      await requestPasswordReset(email)
+      setResetSent(true)
+    } catch {
+      setResetSent(true) // Always show success to avoid email enumeration
+    } finally {
+      setResetLoading(false)
+    }
+  }
 
   const validateEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -101,6 +120,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
     setError(null)
     setShowPassword(false)
     setShowConfirmPassword(false)
+    setResetSent(false)
   }
 
   return (
@@ -266,15 +286,22 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
 
             {/* Link esqueci senha (apenas login) */}
             {activeTab === 'login' && (
-              <p className="text-center text-sm text-gray-500">
-                <button
-                  type="button"
-                  className="text-[#6AAF3D] hover:text-[#7abf4d] transition-colors"
-                  onClick={() => alert('Funcionalidade de recuperação de senha em breve!')}
-                >
-                  Esqueceu a senha?
-                </button>
-              </p>
+              <div className="text-center text-sm">
+                {resetSent ? (
+                  <p className="text-green-400">
+                    Se o email estiver cadastrado, você receberá instruções para redefinir sua senha. Verifique o console do servidor.
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-[#6AAF3D] hover:text-[#7abf4d] transition-colors disabled:opacity-50"
+                    onClick={handleForgotPassword}
+                    disabled={resetLoading}
+                  >
+                    {resetLoading ? 'Enviando...' : 'Esqueceu a senha?'}
+                  </button>
+                )}
+              </div>
             )}
           </form>
 

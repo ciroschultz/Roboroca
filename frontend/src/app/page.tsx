@@ -526,7 +526,7 @@ export default function Home() {
         )
 
       case 'settings':
-        return <SettingsPage currentUser={currentUser} />
+        return <SettingsPage currentUser={currentUser} onUserUpdate={setCurrentUser} />
 
       case 'help':
         return (

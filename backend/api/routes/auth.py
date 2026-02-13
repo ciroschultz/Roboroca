@@ -3,7 +3,9 @@ Authentication Routes
 Endpoints para autenticação e gerenciamento de usuários.
 """
 
-from datetime import timedelta
+import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -14,8 +16,19 @@ from backend.core.database import get_db
 from backend.core.config import settings
 from backend.core.security import verify_password, get_password_hash, create_access_token
 from backend.models.user import User
-from backend.api.schemas.user import UserCreate, UserResponse, Token
+from backend.api.schemas.user import (
+    UserCreate,
+    UserUpdate,
+    UserPreferencesUpdate,
+    UserResponse,
+    Token,
+    PasswordChange,
+    PasswordResetRequest,
+    PasswordResetConfirm,
+)
 from backend.api.dependencies.auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
 
@@ -101,15 +114,106 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.put("/me", response_model=UserResponse)
 async def update_me(
-    full_name: str = None,
+    user_data: UserUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Atualizar dados do usuário autenticado."""
-    if full_name is not None:
-        current_user.full_name = full_name
+    """Atualizar dados do perfil do usuário autenticado."""
+    update_fields = user_data.model_dump(exclude_unset=True)
+    for field, value in update_fields.items():
+        setattr(current_user, field, value)
 
     await db.commit()
     await db.refresh(current_user)
 
     return current_user
+
+
+@router.put("/preferences", response_model=UserResponse)
+async def update_preferences(
+    prefs: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Atualizar preferências do usuário (tema, idioma, notificações)."""
+    update_fields = prefs.model_dump(exclude_unset=True)
+    for field, value in update_fields.items():
+        setattr(current_user, field, value)
+
+    await db.commit()
+    await db.refresh(current_user)
+
+    return current_user
+
+
+@router.post("/password/change")
+async def change_password(
+    data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Alterar senha do usuário autenticado."""
+    if not verify_password(data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Senha atual incorreta"
+        )
+
+    current_user.hashed_password = get_password_hash(data.new_password)
+    await db.commit()
+
+    return {"message": "Senha alterada com sucesso"}
+
+
+@router.post("/password/reset-request")
+async def request_password_reset(
+    data: PasswordResetRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Solicitar reset de senha. Gera token e loga URL no console."""
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+
+    # Always return success to avoid email enumeration
+    if not user:
+        return {"message": "Se o email estiver cadastrado, você receberá instruções para redefinir sua senha."}
+
+    # Generate reset token
+    token = secrets.token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    await db.commit()
+
+    # Log reset URL to console (no email service)
+    reset_url = f"http://localhost:3000/reset-password?token={token}"
+    logger.warning("PASSWORD RESET URL for %s: %s", user.email, reset_url)
+
+    return {"message": "Se o email estiver cadastrado, você receberá instruções para redefinir sua senha."}
+
+
+@router.post("/password/reset-confirm")
+async def confirm_password_reset(
+    data: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db)
+):
+    """Confirmar reset de senha com token válido."""
+    result = await db.execute(
+        select(User).where(
+            User.reset_token == data.token,
+            User.reset_token_expires > datetime.now(timezone.utc)
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token inválido ou expirado"
+        )
+
+    user.hashed_password = get_password_hash(data.new_password)
+    user.reset_token = None
+    user.reset_token_expires = None
+    await db.commit()
+
+    return {"message": "Senha redefinida com sucesso"}

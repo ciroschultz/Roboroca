@@ -24,9 +24,37 @@ class UserLogin(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """Schema para atualizar usuário."""
+    """Schema para atualizar perfil do usuário."""
     full_name: Optional[str] = Field(None, max_length=255)
-    password: Optional[str] = Field(None, min_length=6, max_length=100)
+    phone: Optional[str] = Field(None, max_length=50)
+    bio: Optional[str] = Field(None, max_length=1000)
+    company: Optional[str] = Field(None, max_length=255)
+
+
+class UserPreferencesUpdate(BaseModel):
+    """Schema para atualizar preferências do usuário."""
+    language: Optional[str] = Field(None, max_length=10)
+    theme: Optional[str] = Field(None, max_length=20)
+    email_notifications: Optional[bool] = None
+    push_notifications: Optional[bool] = None
+    weekly_report: Optional[bool] = None
+
+
+class PasswordChange(BaseModel):
+    """Schema para alterar senha."""
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=100)
+
+
+class PasswordResetRequest(BaseModel):
+    """Schema para solicitar reset de senha."""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """Schema para confirmar reset de senha."""
+    token: str
+    new_password: str = Field(..., min_length=6, max_length=100)
 
 
 # --- Response Schemas ---
@@ -37,6 +65,14 @@ class UserResponse(BaseModel):
     email: str
     username: str
     full_name: Optional[str]
+    phone: Optional[str] = None
+    bio: Optional[str] = None
+    company: Optional[str] = None
+    language: Optional[str] = None
+    theme: Optional[str] = None
+    email_notifications: Optional[bool] = None
+    push_notifications: Optional[bool] = None
+    weekly_report: Optional[bool] = None
     is_active: bool
     plan: str
     created_at: datetime

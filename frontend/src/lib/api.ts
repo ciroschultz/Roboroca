@@ -118,16 +118,32 @@ interface UserBackend {
   email: string
   username: string
   full_name: string | null
+  phone: string | null
+  bio: string | null
+  company: string | null
+  language: string | null
+  theme: string | null
+  email_notifications: boolean | null
+  push_notifications: boolean | null
+  weekly_report: boolean | null
   is_active: boolean
   plan: string
   created_at: string
 }
 
-// Interface pública do usuário (simplificada)
+// Interface pública do usuário
 export interface User {
   id: number
   name: string
   email: string
+  phone?: string | null
+  bio?: string | null
+  company?: string | null
+  language?: string | null
+  theme?: string | null
+  email_notifications?: boolean | null
+  push_notifications?: boolean | null
+  weekly_report?: boolean | null
   created_at: string
 }
 
@@ -143,6 +159,14 @@ function convertUser(backendUser: UserBackend): User {
     id: backendUser.id,
     name: backendUser.full_name || backendUser.username,
     email: backendUser.email,
+    phone: backendUser.phone,
+    bio: backendUser.bio,
+    company: backendUser.company,
+    language: backendUser.language,
+    theme: backendUser.theme,
+    email_notifications: backendUser.email_notifications,
+    push_notifications: backendUser.push_notifications,
+    weekly_report: backendUser.weekly_report,
     created_at: backendUser.created_at,
   }
 }
@@ -884,6 +908,99 @@ export async function getProjectsComparison(): Promise<{
   }>
 }> {
   return apiRequest('/projects/comparison')
+}
+
+// ============================================
+// USER PROFILE & PREFERENCES
+// ============================================
+
+export interface UpdateProfileData {
+  full_name?: string
+  phone?: string
+  bio?: string
+  company?: string
+}
+
+export interface UpdatePreferencesData {
+  language?: string
+  theme?: string
+  email_notifications?: boolean
+  push_notifications?: boolean
+  weekly_report?: boolean
+}
+
+/**
+ * Atualizar perfil do usuário
+ */
+export async function updateUserProfile(data: UpdateProfileData): Promise<User> {
+  const backendUser = await apiRequest<UserBackend>('/auth/me', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+  return convertUser(backendUser)
+}
+
+/**
+ * Atualizar preferências do usuário
+ */
+export async function updateUserPreferences(data: UpdatePreferencesData): Promise<User> {
+  const backendUser = await apiRequest<UserBackend>('/auth/preferences', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+  return convertUser(backendUser)
+}
+
+/**
+ * Alterar senha
+ */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+  return apiRequest('/auth/password/change', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  })
+}
+
+/**
+ * Solicitar reset de senha
+ */
+export async function requestPasswordReset(email: string): Promise<{ message: string }> {
+  return apiRequest('/auth/password/reset-request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+/**
+ * Confirmar reset de senha
+ */
+export async function confirmPasswordReset(token: string, newPassword: string): Promise<{ message: string }> {
+  return apiRequest('/auth/password/reset-confirm', {
+    method: 'POST',
+    body: JSON.stringify({ token, new_password: newPassword }),
+  })
+}
+
+// ============================================
+// TIMELINE
+// ============================================
+
+export interface TimelineEntry {
+  periodo: string
+  date: string
+  cobertura?: number
+  saude?: number
+  arvores?: number
+}
+
+/**
+ * Obter evolução temporal do projeto
+ */
+export async function getProjectTimeline(projectId: number): Promise<{
+  project_id: number
+  timeline: TimelineEntry[]
+}> {
+  return apiRequest(`/projects/${projectId}/timeline`)
 }
 
 export { ApiError }

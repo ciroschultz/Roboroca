@@ -39,6 +39,7 @@ import {
   getProjectAnalyses,
   getProjectEnrichedData,
   getProjectAnalysisSummary,
+  getProjectTimeline,
   downloadAnalysisPDF,
   analyzeProject,
   type Analysis,
@@ -47,6 +48,7 @@ import {
   type SoilData,
   type ElevationData,
   type GeocodingData,
+  type TimelineEntry,
 } from '@/lib/api'
 import { useToast } from './Toast'
 
@@ -100,6 +102,8 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>(initialTab || 'overview')
   const [analyses, setAnalyses] = useState<Analysis[]>([])
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
+  const [timelineData, setTimelineData] = useState<TimelineEntry[]>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
   const [loadingAnalyses, setLoadingAnalyses] = useState(false)
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -135,11 +139,6 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
       fetchAnalyses()
     }
   }, [project.id, project.status])
-
-  // Buscar dados enriquecidos independente do status (só precisa de GPS no backend)
-  useEffect(() => {
-    fetchEnrichedData()
-  }, [project.id])
 
   // Stages for the ML analysis pipeline
   const analysisStages = [
@@ -237,6 +236,24 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
       setLoadingEnriched(false)
     }
   }
+
+  const fetchTimeline = useCallback(async () => {
+    setTimelineLoading(true)
+    try {
+      const data = await getProjectTimeline(Number(project.id))
+      setTimelineData(data.timeline)
+    } catch {
+      // Silently fail - timeline is optional
+    } finally {
+      setTimelineLoading(false)
+    }
+  }, [project.id])
+
+  // Buscar dados enriquecidos e timeline independente do status
+  useEffect(() => {
+    fetchEnrichedData()
+    fetchTimeline()
+  }, [project.id, fetchTimeline])
 
   const handleStartAnalysis = async () => {
     try {
@@ -403,13 +420,14 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
     { name: 'Critica', value: project.results.criticalPercentage, color: '#EF4444' },
   ] : []
 
-  // Dados de evolução temporal (placeholder - será implementado com histórico real)
-  const vegetationTimeData = [
-    { periodo: 'Semana 1', cobertura: 62, saude: 35 },
-    { periodo: 'Semana 2', cobertura: 65, saude: 38 },
-    { periodo: 'Semana 3', cobertura: 68, saude: 41 },
-    { periodo: 'Semana 4', cobertura: 71, saude: 44 },
-  ]
+  // Dados de evolução temporal (da API)
+  const vegetationTimeData = timelineData.length > 0
+    ? timelineData.map(entry => ({
+        periodo: entry.periodo,
+        cobertura: entry.cobertura ?? 0,
+        saude: entry.saude ?? 0,
+      }))
+    : []
 
   // Helper para formatar valores de dados enriquecidos
   const formatWeatherValue = (val: unknown): string => {
@@ -810,15 +828,27 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <AreaChartComponent
-                data={vegetationTimeData}
-                title="Evolução da Vegetação"
-                dataKeys={[
-                  { key: 'cobertura', name: 'Cobertura Vegetal (%)', color: '#6AAF3D' },
-                  { key: 'saude', name: 'Índice de Saúde (%)', color: '#3B82F6' },
-                ]}
-                xAxisKey="periodo"
-              />
+              {timelineLoading ? (
+                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6 flex items-center justify-center min-h-[200px]">
+                  <Loader2 size={24} className="animate-spin text-gray-400" />
+                </div>
+              ) : vegetationTimeData.length > 0 ? (
+                <AreaChartComponent
+                  data={vegetationTimeData}
+                  title="Evolução da Vegetação"
+                  dataKeys={[
+                    { key: 'cobertura', name: 'Cobertura Vegetal (%)', color: '#6AAF3D' },
+                    { key: 'saude', name: 'Índice de Saúde (%)', color: '#3B82F6' },
+                  ]}
+                  xAxisKey="periodo"
+                />
+              ) : (
+                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6 flex flex-col items-center justify-center min-h-[200px] text-center">
+                  <BarChart3 size={32} className="text-gray-600 mb-2" />
+                  <p className="text-gray-400 text-sm">Sem dados temporais disponíveis</p>
+                  <p className="text-gray-500 text-xs mt-1">Realize análises em diferentes datas para ver a evolução</p>
+                </div>
+              )}
               {project.results.heightDistribution.length > 0 && (
                 <BarChartComponent
                   data={project.results.heightDistribution}
