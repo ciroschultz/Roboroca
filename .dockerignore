@@ -1,0 +1,16 @@
+node_modules
+.git
+.gitignore
+__pycache__
+*.pyc
+.env
+.env.local
+uploads/*
+!uploads/.gitkeep
+ml_models/*.pt
+*.db
+.next
+.vscode
+.claude
+venv
+*.md

@@ -52,6 +52,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:8000",
     ]
 
+    # Frontend URL (para links em emails, CORS, etc.)
+    FRONTEND_URL: str = "http://localhost:3000"
+
     # Upload de Arquivos
     MAX_UPLOAD_SIZE: int = 500 * 1024 * 1024  # 500MB
     ALLOWED_IMAGE_EXTENSIONS: List[str] = [".tif", ".tiff", ".jpg", ".jpeg", ".png", ".geotiff"]

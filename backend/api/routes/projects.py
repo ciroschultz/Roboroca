@@ -1349,6 +1349,133 @@ async def get_project_timeline(
     return {"project_id": project_id, "timeline": timeline}
 
 
+@router.get("/{project_id}/alerts")
+async def get_project_alerts(
+    project_id: int,
+    veg_critical: float = Query(30.0, description="Limiar critico de cobertura vegetal (%)"),
+    veg_warning: float = Query(50.0, description="Limiar de alerta de cobertura vegetal (%)"),
+    health_critical: float = Query(0.5, description="Limiar critico de saude"),
+    health_warning: float = Query(0.7, description="Limiar de alerta de saude"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obter alertas de saude do projeto baseados em limiares configuraveis.
+
+    Analisa os resultados mais recentes e retorna alertas com severidade
+    (critical/warning) para metricas abaixo dos limiares.
+    """
+    # Verificar projeto
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Projeto nao encontrado"
+        )
+
+    # Buscar analises completas
+    analyses_result = await db.execute(
+        select(Analysis)
+        .join(Image, Analysis.image_id == Image.id)
+        .where(
+            Image.project_id == project_id,
+            Analysis.analysis_type == "full_report",
+            Analysis.status == "completed"
+        )
+    )
+    analyses = analyses_result.scalars().all()
+
+    if not analyses:
+        return {"project_id": project_id, "alerts": [], "summary": "Sem analises disponiveis"}
+
+    # Agregar metricas
+    veg_percentages = []
+    health_indices = []
+    tree_counts = []
+
+    for analysis in analyses:
+        if not analysis.results:
+            continue
+        r = analysis.results
+        if "vegetation_coverage" in r:
+            veg_percentages.append(r["vegetation_coverage"].get("vegetation_percentage", 0))
+        elif "coverage" in r:
+            veg_percentages.append(r["coverage"].get("vegetation_percentage", 0))
+
+        if "vegetation_health" in r:
+            health_indices.append(r["vegetation_health"].get("health_index", 0))
+        elif "health" in r:
+            health_indices.append(r["health"].get("health_index", 0))
+
+        if "tree_count" in r:
+            tree_counts.append(r["tree_count"].get("total_trees", 0))
+
+    alerts = []
+
+    # Verificar cobertura vegetal
+    if veg_percentages:
+        avg_veg = sum(veg_percentages) / len(veg_percentages)
+        if avg_veg < veg_critical:
+            alerts.append({
+                "severity": "critical",
+                "metric": "vegetation_coverage",
+                "message": f"Cobertura vegetal abaixo de {veg_critical}% (atual: {avg_veg:.1f}%)",
+                "current_value": round(avg_veg, 2),
+                "threshold": veg_critical,
+            })
+        elif avg_veg < veg_warning:
+            alerts.append({
+                "severity": "warning",
+                "metric": "vegetation_coverage",
+                "message": f"Cobertura vegetal abaixo de {veg_warning}% (atual: {avg_veg:.1f}%)",
+                "current_value": round(avg_veg, 2),
+                "threshold": veg_warning,
+            })
+
+    # Verificar saude
+    if health_indices:
+        avg_health = sum(health_indices) / len(health_indices)
+        if avg_health < health_critical:
+            alerts.append({
+                "severity": "critical",
+                "metric": "health_index",
+                "message": f"Indice de saude abaixo de {health_critical} (atual: {avg_health:.2f})",
+                "current_value": round(avg_health, 2),
+                "threshold": health_critical,
+            })
+        elif avg_health < health_warning:
+            alerts.append({
+                "severity": "warning",
+                "metric": "health_index",
+                "message": f"Indice de saude abaixo de {health_warning} (atual: {avg_health:.2f})",
+                "current_value": round(avg_health, 2),
+                "threshold": health_warning,
+            })
+
+    # Verificar se nao ha arvores detectadas
+    if tree_counts and sum(tree_counts) == 0 and len(analyses) > 0:
+        alerts.append({
+            "severity": "warning",
+            "metric": "tree_count",
+            "message": "Nenhuma arvore detectada nas analises",
+            "current_value": 0,
+            "threshold": 1,
+        })
+
+    return {
+        "project_id": project_id,
+        "alerts": alerts,
+        "summary": f"{len(alerts)} alerta(s) encontrado(s)" if alerts else "Projeto saudavel"
+    }
+
+
 @router.get("/{project_id}/enriched-data")
 async def get_project_enriched_data(
     project_id: int,

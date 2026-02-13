@@ -359,10 +359,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configurar CORS - Permitir todas origens em desenvolvimento
+# Configurar CORS - Restritivo em produção, aberto em dev
+if settings.ENVIRONMENT == "development":
+    cors_origins = ["*"]
+else:
+    cors_origins = settings.CORS_ORIGINS
+    if settings.FRONTEND_URL not in cors_origins:
+        cors_origins.append(settings.FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permitir qualquer origem em dev
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],

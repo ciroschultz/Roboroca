@@ -1003,4 +1003,41 @@ export async function getProjectTimeline(projectId: number): Promise<{
   return apiRequest(`/projects/${projectId}/timeline`)
 }
 
+// ============================================
+// ANNOTATIONS - GeoJSON Export
+// ============================================
+
+/**
+ * Exportar anotacoes como GeoJSON
+ */
+export async function exportAnnotationsGeoJSON(imageId?: number, projectId?: number): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams()
+  if (imageId) params.append('image_id', String(imageId))
+  if (projectId) params.append('project_id', String(projectId))
+  return apiRequest(`/annotations/export/geojson?${params}`)
+}
+
+// ============================================
+// ALERTS - Health Alerts
+// ============================================
+
+export interface AlertItem {
+  severity: 'critical' | 'warning'
+  metric: string
+  message: string
+  current_value: number
+  threshold: number
+}
+
+/**
+ * Obter alertas de saude do projeto
+ */
+export async function getProjectAlerts(projectId: number): Promise<{
+  project_id: number
+  alerts: AlertItem[]
+  summary: string
+}> {
+  return apiRequest(`/projects/${projectId}/alerts`)
+}
+
 export { ApiError }

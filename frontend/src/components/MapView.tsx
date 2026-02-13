@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { API_BASE_URL, loadAuthToken } from '@/lib/api'
+import { API_BASE_URL, loadAuthToken, exportAnnotationsGeoJSON } from '@/lib/api'
 import {
   Layers,
   ZoomIn,
@@ -30,6 +30,7 @@ import {
   X,
   Save,
   Palette,
+  Globe,
 } from 'lucide-react'
 
 type MapMode = 'project'
@@ -654,6 +655,33 @@ export default function MapView({ projectId }: MapViewProps) {
     document.body.removeChild(a)
   }, [currentImageUrl, projectImages, selectedImageIndex])
 
+  // Export GeoJSON annotations
+  const [exportingGeoJSON, setExportingGeoJSON] = useState(false)
+  const handleExportGeoJSON = useCallback(async () => {
+    if (!selectedProject) return
+    setExportingGeoJSON(true)
+    try {
+      const currentImage = projectImages[selectedImageIndex]
+      const geojson = await exportAnnotationsGeoJSON(
+        currentImage?.id,
+        undefined
+      )
+      const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `anotacoes_${currentImage?.original_filename || selectedProject.name}.geojson`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Erro ao exportar GeoJSON:', err)
+    } finally {
+      setExportingGeoJSON(false)
+    }
+  }, [selectedProject, projectImages, selectedImageIndex])
+
   // Load image with authentication
   const loadImage = async (image: ProjectImage) => {
     const token = getAuthToken()
@@ -892,6 +920,14 @@ export default function MapView({ projectId }: MapViewProps) {
                       title="Painel de informacoes"
                     >
                       <Info size={18} />
+                    </button>
+                    <button
+                      onClick={handleExportGeoJSON}
+                      disabled={exportingGeoJSON || !projectImages[selectedImageIndex]}
+                      className="p-2 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      title="Exportar anotacoes como GeoJSON"
+                    >
+                      {exportingGeoJSON ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
                     </button>
                     <button
                       onClick={handleExportImage}

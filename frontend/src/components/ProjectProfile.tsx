@@ -40,6 +40,7 @@ import {
   getProjectEnrichedData,
   getProjectAnalysisSummary,
   getProjectTimeline,
+  getProjectAlerts,
   downloadAnalysisPDF,
   analyzeProject,
   type Analysis,
@@ -49,6 +50,7 @@ import {
   type ElevationData,
   type GeocodingData,
   type TimelineEntry,
+  type AlertItem,
 } from '@/lib/api'
 import { useToast } from './Toast'
 
@@ -104,6 +106,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
   const [timelineData, setTimelineData] = useState<TimelineEntry[]>([])
   const [timelineLoading, setTimelineLoading] = useState(false)
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [loadingAnalyses, setLoadingAnalyses] = useState(false)
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -133,10 +136,13 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [isReanalyzing, setIsReanalyzing] = useState(false)
   const [isExportingJson, setIsExportingJson] = useState(false)
 
-  // Buscar análises do projeto ao montar
+  // Buscar análises e alertas do projeto ao montar
   useEffect(() => {
     if (project.status === 'completed' || project.status === 'processing') {
       fetchAnalyses()
+    }
+    if (project.status === 'completed') {
+      getProjectAlerts(Number(project.id)).then(res => setAlerts(res.alerts)).catch(() => {})
     }
   }, [project.id, project.status])
 
@@ -740,6 +746,24 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
         ) : activeTab === 'overview' ? (
           project.results ? (
           <>
+            {/* Banner de alertas */}
+            {alerts.length > 0 && (
+              <div className="mb-6 space-y-2">
+                {alerts.map((alert, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex items-center gap-3 p-3 rounded-lg border ${
+                      alert.severity === 'critical'
+                        ? 'bg-red-900/20 border-red-500/40 text-red-400'
+                        : 'bg-yellow-900/20 border-yellow-500/40 text-yellow-400'
+                    }`}
+                  >
+                    <AlertTriangle size={18} />
+                    <span className="text-sm">{alert.message}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {/* Cards de estatisticas do projeto */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <StatCard

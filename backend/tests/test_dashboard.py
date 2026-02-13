@@ -227,3 +227,75 @@ async def test_timeline_user_isolation(
         f"/projects/{project.id}/timeline", headers=second_user_headers
     )
     assert response.status_code == 404
+
+
+# ============================================
+# GET /projects/{id}/alerts
+# ============================================
+
+@pytest.mark.asyncio
+async def test_alerts_healthy_project(
+    client: AsyncClient, auth_headers: dict, project_with_analysis
+):
+    """Project with good metrics returns no alerts."""
+    project, _ = project_with_analysis
+    response = await client.get(
+        f"/projects/{project.id}/alerts", headers=auth_headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["alerts"] == []
+    assert "saudavel" in data["summary"].lower()
+
+
+@pytest.mark.asyncio
+async def test_alerts_low_coverage(
+    client: AsyncClient, auth_headers: dict, db_session: AsyncSession,
+    test_user: User, test_project: Project
+):
+    """Project with low vegetation triggers critical alert."""
+    image = Image(
+        filename="low.jpg", original_filename="low.jpg",
+        file_path="/tmp/low.jpg", file_size=1024,
+        mime_type="image/jpeg", image_type="drone",
+        width=1920, height=1080, status="analyzed",
+        project_id=test_project.id,
+    )
+    db_session.add(image)
+    await db_session.commit()
+    await db_session.refresh(image)
+
+    analysis = Analysis(
+        analysis_type="full_report", status="completed",
+        image_id=image.id,
+        results={
+            "vegetation_coverage": {"vegetation_percentage": 15.0},
+            "vegetation_health": {"health_index": 0.3},
+        },
+        completed_at=datetime.now(timezone.utc),
+    )
+    db_session.add(analysis)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/projects/{test_project.id}/alerts", headers=auth_headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["alerts"]) >= 1
+    severities = [a["severity"] for a in data["alerts"]]
+    assert "critical" in severities
+
+
+@pytest.mark.asyncio
+async def test_alerts_auth_required(client: AsyncClient, test_project: Project):
+    """Alerts endpoint requires authentication."""
+    response = await client.get(f"/projects/{test_project.id}/alerts")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_alerts_not_found(client: AsyncClient, auth_headers: dict):
+    """Alerts for nonexistent project returns 404."""
+    response = await client.get("/projects/99999/alerts", headers=auth_headers)
+    assert response.status_code == 404
