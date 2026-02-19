@@ -306,7 +306,7 @@ export default function MapView({ projectId }: MapViewProps) {
   // Fetch project images
   const fetchProjectImages = async (projectId: number) => {
     try {
-      const data = await apiGetImages(projectId, 0, 200)
+      const data = await apiGetImages(projectId, 0, 100)
       setProjectImages(data.images || [])
       setSelectedImageIndex(0)
     } catch (err) {
@@ -522,12 +522,22 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }, [projectId, projects])
 
+  // When projectId is provided but projects haven't loaded yet,
+  // start loading images directly to avoid waiting for the full project list
+  useEffect(() => {
+    if (projectId && !selectedProject && projects.length === 0) {
+      fetchProjectImages(projectId)
+      fetchAnalysisSummary(projectId)
+    }
+  }, [projectId])
+
   // Load project details when selected
   useEffect(() => {
     if (selectedProject) {
       fetchProjectImages(selectedProject.id)
       fetchAnalysisSummary(selectedProject.id)
-    } else {
+    } else if (!projectId) {
+      // Only clear when no projectId prop (manual deselection)
       setProjectImages([])
       setAnalysisSummary(null)
     }
@@ -590,6 +600,7 @@ export default function MapView({ projectId }: MapViewProps) {
   // State for image blob URL
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null)
   const [imageLoading, setImageLoading] = useState(false)
+  const currentImageUrlRef = useRef<string | null>(null)
 
   // Export current image
   const handleExportImage = useCallback(() => {
@@ -630,27 +641,37 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }, [selectedProject, projectImages, selectedImageIndex])
 
-  // Load image with authentication
-  const loadImage = async (image: ProjectImage) => {
+  // Load image with authentication (try thumbnail first, fallback to full file)
+  const loadImage = useCallback(async (image: ProjectImage) => {
     const token = getAuthToken()
     if (!token) return
 
     setImageLoading(true)
     try {
-      const response = await fetch(`${API_BASE_URL}/images/${image.id}/thumbnail`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+      // Try thumbnail first
+      let response = await fetch(`${API_BASE_URL}/images/${image.id}/thumbnail`, {
+        headers: { 'Authorization': `Bearer ${token}` },
       })
+
+      // Fallback to full file if thumbnail fails
+      if (!response.ok) {
+        response = await fetch(`${API_BASE_URL}/images/${image.id}/file`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        })
+      }
 
       if (response.ok) {
         const blob = await response.blob()
         const url = URL.createObjectURL(blob)
         // Revoke previous URL to free memory
-        if (currentImageUrl) {
-          URL.revokeObjectURL(currentImageUrl)
+        if (currentImageUrlRef.current) {
+          URL.revokeObjectURL(currentImageUrlRef.current)
         }
+        currentImageUrlRef.current = url
         setCurrentImageUrl(url)
+      } else {
+        console.error('Erro ao carregar imagem: status', response.status)
+        setCurrentImageUrl(null)
       }
     } catch (err) {
       console.error('Erro ao carregar imagem:', err)
@@ -658,7 +679,7 @@ export default function MapView({ projectId }: MapViewProps) {
     } finally {
       setImageLoading(false)
     }
-  }
+  }, [])
 
   // Load image when selected
   useEffect(() => {
@@ -675,11 +696,11 @@ export default function MapView({ projectId }: MapViewProps) {
     }
     // Cleanup on unmount
     return () => {
-      if (currentImageUrl) {
-        URL.revokeObjectURL(currentImageUrl)
+      if (currentImageUrlRef.current) {
+        URL.revokeObjectURL(currentImageUrlRef.current)
       }
     }
-  }, [projectImages, selectedImageIndex])
+  }, [projectImages, selectedImageIndex, loadImage])
 
   return (
     <div ref={mapContainerRef} className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden h-full flex flex-col">
@@ -936,7 +957,14 @@ export default function MapView({ projectId }: MapViewProps) {
                       <div className="flex items-center justify-center h-full" style={{ minHeight: '100vh' }}>
                         <div className="text-center">
                           <AlertCircle size={48} className="text-gray-600 mx-auto mb-4" />
-                          <p className="text-gray-400">Erro ao carregar imagem</p>
+                          <p className="text-gray-400 mb-3">Erro ao carregar imagem</p>
+                          <button
+                            onClick={() => projectImages[selectedImageIndex] && loadImage(projectImages[selectedImageIndex])}
+                            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors flex items-center gap-2 mx-auto"
+                          >
+                            <RefreshCw size={14} />
+                            Tentar novamente
+                          </button>
                         </div>
                       </div>
                     )}

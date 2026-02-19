@@ -40,6 +40,18 @@ except ImportError as e:
     count_trees_by_segmentation = None
     logger.warning("count_trees_by_segmentation failed to import: %s", e)
 
+# Importar detecção de pragas/doenças (independente de YOLO/torch)
+try:
+    from backend.services.ml.pest_detector import detect_pest_disease
+except ImportError:
+    detect_pest_disease = None
+
+# Importar estimativa de biomassa (independente de YOLO/torch)
+try:
+    from backend.services.ml.biomass_estimator import estimate_biomass
+except ImportError:
+    estimate_biomass = None
+
 # Importar outros serviços ML (com tratamento de erro)
 try:
     from backend.services.ml import (
@@ -179,6 +191,26 @@ async def run_image_full_analysis(image, analysis, db):
                 if "ml_errors" not in analysis_results:
                     analysis_results["ml_errors"] = []
                 analysis_results["ml_errors"].append(f"tree_count: {e}")
+
+        # 4. Detecção de pragas/doenças (SEMPRE executar - independente de torch)
+        if detect_pest_disease is not None:
+            try:
+                pest_results = await asyncio.to_thread(detect_pest_disease, image.file_path)
+                analysis_results["pest_disease"] = pest_results
+            except Exception as e:
+                if "ml_errors" not in analysis_results:
+                    analysis_results["ml_errors"] = []
+                analysis_results["ml_errors"].append(f"pest_disease: {e}")
+
+        # 5. Estimativa de biomassa (SEMPRE executar - independente de torch)
+        if estimate_biomass is not None:
+            try:
+                biomass = await asyncio.to_thread(estimate_biomass, image.file_path)
+                analysis_results["biomass"] = biomass
+            except Exception as e:
+                if "ml_errors" not in analysis_results:
+                    analysis_results["ml_errors"] = []
+                analysis_results["ml_errors"].append(f"biomass: {e}")
 
         # Remover ml_errors se estiver vazio
         if "ml_errors" in analysis_results and not analysis_results["ml_errors"]:
@@ -1468,6 +1500,33 @@ async def get_project_alerts(
             "current_value": 0,
             "threshold": 1,
         })
+
+    # Verificar pragas/doencas
+    pest_infection_rates = []
+    for analysis in analyses:
+        if analysis.results and "pest_disease" in analysis.results:
+            pest_infection_rates.append(
+                analysis.results["pest_disease"].get("infection_rate", 0)
+            )
+
+    if pest_infection_rates:
+        avg_infection = sum(pest_infection_rates) / len(pest_infection_rates)
+        if avg_infection > 30:
+            alerts.append({
+                "severity": "critical",
+                "metric": "pest_disease",
+                "message": f"Pragas/doencas detectadas em {avg_infection:.1f}% da area vegetal",
+                "current_value": round(avg_infection, 2),
+                "threshold": 30,
+            })
+        elif avg_infection > 10:
+            alerts.append({
+                "severity": "warning",
+                "metric": "pest_disease",
+                "message": f"Sinais de pragas/doencas em {avg_infection:.1f}% da area vegetal",
+                "current_value": round(avg_infection, 2),
+                "threshold": 10,
+            })
 
     return {
         "project_id": project_id,

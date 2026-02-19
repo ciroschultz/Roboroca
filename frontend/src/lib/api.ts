@@ -78,7 +78,12 @@ async function apiRequest<T>(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido' }))
-    throw new ApiError(response.status, errorData.detail || 'Erro na requisição')
+    // Handle Pydantic 422 validation errors: detail is an array of {msg, loc, type}
+    let detail = errorData.detail
+    if (response.status === 422 && Array.isArray(detail)) {
+      detail = detail.map((e: any) => e.msg).join('; ')
+    }
+    throw new ApiError(response.status, detail || 'Erro na requisição')
   }
 
   // Se for 204 No Content, retornar null
@@ -210,9 +215,10 @@ export async function login(credentials: LoginCredentials): Promise<AuthResponse
  */
 export async function register(data: RegisterData): Promise<AuthResponse> {
   // Converter dados do frontend para o formato do backend
+  // Add random suffix to username to avoid collisions
   const registerRequest: RegisterRequest = {
     email: data.email,
-    username: data.email.split('@')[0], // Usar parte do email como username
+    username: data.email.split('@')[0] + '_' + Math.random().toString(36).slice(2, 6),
     password: data.password,
     full_name: data.name,
   }
@@ -480,6 +486,32 @@ export async function deleteImage(id: number): Promise<void> {
 }
 
 // ============================================
+// IMAGE CLUSTERS - Agrupamento GPS
+// ============================================
+
+export interface ImageCluster {
+  cluster_id: number
+  images: Array<{ id: number; latitude: number; longitude: number; filename: string }>
+  centroid: { latitude: number; longitude: number }
+  image_count: number
+}
+
+export interface ClustersResponse {
+  project_id: number
+  total_images_with_gps: number
+  total_clusters: number
+  clusters: ImageCluster[]
+  radius_m: number
+}
+
+/**
+ * Obter clusters de imagens agrupadas por proximidade GPS
+ */
+export async function getImageClusters(projectId: number, radiusM = 50): Promise<ClustersResponse> {
+  return apiRequest(`/images/clusters/by-project?project_id=${projectId}&radius_m=${radiusM}`)
+}
+
+// ============================================
 // ANALYSIS - Análises
 // ============================================
 
@@ -525,6 +557,34 @@ export async function getAnalysis(id: number): Promise<Analysis> {
  */
 export async function analyzeVegetation(imageId: number, threshold = 0.3): Promise<Analysis> {
   return apiRequest(`/analysis/vegetation/${imageId}?threshold=${threshold}`, { method: 'POST' })
+}
+
+/**
+ * Executar análise NDVI (Índice ExG) em uma imagem
+ */
+export async function analyzeNDVI(imageId: number, threshold = 0.3): Promise<Analysis> {
+  return apiRequest(`/analysis/ndvi/${imageId}?threshold=${threshold}`, { method: 'POST' })
+}
+
+/**
+ * Executar contagem de plantas em uma imagem
+ */
+export async function analyzePlantCount(imageId: number, minArea = 50, maxArea = 15000): Promise<Analysis> {
+  return apiRequest(`/analysis/plant-count/${imageId}?min_area=${minArea}&max_area=${maxArea}`, { method: 'POST' })
+}
+
+/**
+ * Detectar pragas e doencas na vegetacao
+ */
+export async function detectPestDisease(imageId: number, anomalyThreshold = 2.0): Promise<Analysis> {
+  return apiRequest(`/analysis/pest-disease/${imageId}?anomaly_threshold=${anomalyThreshold}`, { method: 'POST' })
+}
+
+/**
+ * Estimar biomassa vegetal na imagem
+ */
+export async function estimateBiomass(imageId: number, minCanopyArea = 50): Promise<Analysis> {
+  return apiRequest(`/analysis/biomass/${imageId}?min_canopy_area=${minCanopyArea}`, { method: 'POST' })
 }
 
 /**
@@ -866,6 +926,18 @@ export async function getProjectAnalyses(
 export async function healthCheck(): Promise<{ status: string }> {
   try {
     const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/`)
+    return response.json()
+  } catch {
+    throw new ApiError(0, 'API não está respondendo')
+  }
+}
+
+/**
+ * Verificar se a API e o banco de dados estão prontos
+ */
+export async function healthCheckReady(): Promise<{ status: string; database: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api/v1', '')}/health/ready`)
     return response.json()
   } catch {
     throw new ApiError(0, 'API não está respondendo')

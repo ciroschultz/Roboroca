@@ -27,6 +27,7 @@ import {
   Video,
   Cpu,
   Pencil,
+  ChevronDown,
 } from 'lucide-react'
 import {
   DonutChart,
@@ -96,6 +97,8 @@ interface ProjectProfileProps {
   onRefresh?: () => void
   initialTab?: 'overview' | 'map' | 'analysis' | 'report'
   analysisSection?: string
+  allProjects?: { id: string; name: string }[]
+  onProjectChange?: (projectId: string) => void
 }
 
 // Mapa de submenu ID → section element ID
@@ -108,7 +111,7 @@ const sectionMap: Record<string, string> = {
   'altura': 'section-summary',
 }
 
-export default function ProjectProfile({ project, onBack, onRefresh, initialTab, analysisSection }: ProjectProfileProps) {
+export default function ProjectProfile({ project, onBack, onRefresh, initialTab, analysisSection, allProjects, onProjectChange }: ProjectProfileProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>(initialTab || 'overview')
   const [analyses, setAnalyses] = useState<Analysis[]>([])
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
@@ -122,6 +125,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const { confirm } = useConfirmDialog()
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [showProjectSwitcher, setShowProjectSwitcher] = useState(false)
 
   // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
   useEffect(() => {
@@ -467,7 +471,32 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             </button>
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+                {/* Project name with optional switcher dropdown */}
+                <div className="relative">
+                  <button
+                    onClick={() => allProjects && allProjects.length > 1 ? setShowProjectSwitcher(!showProjectSwitcher) : undefined}
+                    className={`flex items-center gap-1 text-2xl font-bold text-white ${allProjects && allProjects.length > 1 ? 'hover:text-[#6AAF3D] cursor-pointer' : ''}`}
+                  >
+                    {project.name}
+                    {allProjects && allProjects.length > 1 && <ChevronDown size={20} className="text-gray-400" />}
+                  </button>
+                  {showProjectSwitcher && allProjects && (
+                    <div className="absolute top-full left-0 mt-1 w-64 bg-[#1a1a2e] border border-gray-700 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+                      {allProjects.filter(p => p.id !== project.id).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => {
+                            setShowProjectSwitcher(false)
+                            onProjectChange?.(p.id)
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors truncate"
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={() => setIsEditModalOpen(true)}
                   className="p-1.5 hover:bg-gray-700/50 text-gray-400 hover:text-white rounded-lg transition-colors"
@@ -588,7 +617,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             </button>
 
             {/* Dados ambientais mesmo em projetos pendentes */}
-            {enrichedData && enrichedData.coordinates ? (
+            {enrichedData && (enrichedData.weather || enrichedData.soil || enrichedData.elevation || enrichedData.geocoding) ? (
               <div className="w-full max-w-4xl">
                 <h4 className="text-white font-medium text-sm mb-3 text-center">Dados Ambientais do Local</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -926,7 +955,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             </div>
 
             {/* Dados Enriquecidos */}
-            {enrichedData && enrichedData.coordinates ? (
+            {enrichedData && (enrichedData.weather || enrichedData.soil || enrichedData.elevation || enrichedData.geocoding) ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {/* Clima */}
                 {enrichedData.weather && !enrichedData.weather.error && (
@@ -1142,7 +1171,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
               </div>
 
               {/* Dados Enriquecidos */}
-              {enrichedData && enrichedData.coordinates ? (
+              {enrichedData && (enrichedData.weather || enrichedData.soil || enrichedData.elevation || enrichedData.geocoding) ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {enrichedData.weather && !enrichedData.weather.error && (
                     <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">

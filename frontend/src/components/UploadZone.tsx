@@ -4,7 +4,6 @@ import { useState, useCallback, useEffect } from 'react'
 import { Upload, Image, Video, Satellite, Plane, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import {
   createProject,
-  uploadImage,
   uploadMultipleImages,
   loadAuthToken,
   analyzeProject,
@@ -172,39 +171,43 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
         description: `Projeto criado via upload - ${sourceType === 'drone' ? 'Imagens de Drone' : 'Imagens de Satélite'}`,
       })
 
-      // 2. Upload dos arquivos um por um (com progresso)
+      // 2. Upload em lote (batch)
       const filesToUpload = files.filter(f => f.status !== 'success')
 
-      for (let i = 0; i < filesToUpload.length; i++) {
-        const uploadFile = filesToUpload[i]
+      // Marcar todos como uploading
+      setFiles(prev => prev.map(f =>
+        filesToUpload.some(u => u.id === f.id)
+          ? { ...f, status: 'uploading' as const }
+          : f
+      ))
 
-        // Marcar como uploading
-        setFiles(prev => prev.map(f =>
-          f.id === uploadFile.id ? { ...f, status: 'uploading' as const } : f
-        ))
-
-        try {
-          await uploadImage(
-            uploadFile.file,
-            project.id,
-            sourceType as 'drone' | 'satellite',
-            (progress) => {
-              setFiles(prev => prev.map(f =>
-                f.id === uploadFile.id ? { ...f, progress } : f
-              ))
-            }
-          )
-
-          // Marcar como sucesso
+      const result = await uploadMultipleImages(
+        filesToUpload.map(f => f.file),
+        project.id,
+        sourceType as 'drone' | 'satellite',
+        (totalProgress) => {
           setFiles(prev => prev.map(f =>
-            f.id === uploadFile.id ? { ...f, status: 'success' as const, progress: 100 } : f
+            filesToUpload.some(u => u.id === f.id)
+              ? { ...f, progress: totalProgress }
+              : f
           ))
+        }
+      )
 
-        } catch (err) {
-          // Marcar como erro
-          const errorMsg = err instanceof ApiError ? err.detail : 'Erro no upload'
+      // Marcar sucesso
+      setFiles(prev => prev.map(f =>
+        filesToUpload.some(u => u.id === f.id)
+          ? { ...f, status: 'success' as const, progress: 100 }
+          : f
+      ))
+
+      // Marcar erros individuais (se houver)
+      if (result.errors) {
+        for (const err of result.errors) {
           setFiles(prev => prev.map(f =>
-            f.id === uploadFile.id ? { ...f, status: 'error' as const, errorMessage: errorMsg } : f
+            f.name === err.filename
+              ? { ...f, status: 'error' as const, errorMessage: err.error }
+              : f
           ))
         }
       }

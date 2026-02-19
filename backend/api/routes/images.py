@@ -303,7 +303,7 @@ async def upload_multiple_images(
             detail="Projeto não encontrado"
         )
 
-    uploaded = []
+    uploaded_images: list[Image] = []
     errors = []
 
     for file in files:
@@ -390,10 +390,7 @@ async def upload_multiple_images(
             )
 
             db.add(image)
-            uploaded.append({
-                "filename": file.filename,
-                "id": None  # Será preenchido após commit
-            })
+            uploaded_images.append(image)
 
         except Exception as e:
             errors.append({
@@ -404,11 +401,25 @@ async def upload_multiple_images(
     # Commit em lote
     await db.commit()
 
+    # Refresh para obter IDs gerados
+    for img in uploaded_images:
+        await db.refresh(img)
+
+    # Atualizar coordenadas do projeto se for a primeira imagem com GPS
+    if not project.latitude:
+        for img in uploaded_images:
+            if img.center_lat and img.center_lon:
+                project.latitude = img.center_lat
+                project.longitude = img.center_lon
+                await db.commit()
+                break
+
     return {
-        "message": f"{len(uploaded)} arquivo(s) enviado(s) com sucesso",
-        "uploaded_count": len(uploaded),
+        "message": f"{len(uploaded_images)} arquivo(s) enviado(s) com sucesso",
+        "uploaded_count": len(uploaded_images),
         "error_count": len(errors),
-        "errors": errors if errors else None
+        "errors": errors if errors else None,
+        "image_ids": [img.id for img in uploaded_images],
     }
 
 
@@ -471,11 +482,51 @@ async def get_image_thumbnail(
         else:
             get_video_thumbnail(image.file_path, thumb_path)
         return FileResponse(thumb_path, media_type="image/jpeg")
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to generate thumbnail for image %s: %s", image_id, e)
+        # Fallback: serve original file if it's an image
+        if is_image_file(image.original_filename) and os.path.exists(image.file_path):
+            return FileResponse(
+                image.file_path,
+                media_type=image.mime_type or "application/octet-stream",
+            )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Thumbnail não disponível"
         )
+
+
+@router.get("/{image_id}/file")
+async def get_image_file(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Servir o arquivo original da imagem."""
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada"
+        )
+
+    if not os.path.exists(image.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Arquivo não encontrado no disco"
+        )
+
+    return FileResponse(
+        image.file_path,
+        media_type=image.mime_type or "application/octet-stream",
+        filename=image.original_filename,
+    )
 
 
 @router.get("/{image_id}/metadata", response_model=ImageMetadata)

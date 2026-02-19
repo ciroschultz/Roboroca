@@ -20,6 +20,10 @@ import {
   Info,
   X,
   Eye,
+  Activity,
+  Hash,
+  Bug,
+  TreePine,
 } from 'lucide-react'
 import {
   getImages,
@@ -27,6 +31,10 @@ import {
   getImageMetadata,
   getAnalyses,
   analyzeVegetation,
+  analyzeNDVI,
+  analyzePlantCount,
+  detectPestDisease,
+  estimateBiomass,
   analyzePlantHealth,
   analyzeColors,
   detectObjects,
@@ -68,6 +76,37 @@ function formatFileSize(bytes: number): string {
   return `${bytes} B`
 }
 
+// Componente que carrega imagem via fetch autenticado (Bearer token)
+// <img crossOrigin="use-credentials"> NAO envia Bearer token, so cookies.
+function AuthImg({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let revoked = false
+    let url = ''
+    const token = loadAuthToken()
+    fetch(src, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(res => res.ok ? res.blob() : null)
+      .then(blob => {
+        if (blob && !revoked) {
+          url = URL.createObjectURL(blob)
+          setBlobUrl(url)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      revoked = true
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [src])
+
+  if (!blobUrl) return <div className={`${className} bg-gray-800`} />
+  return <img src={blobUrl} alt={alt} className={className} />
+}
+
 export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: ImageAnalysisPanelProps) {
   const [images, setImages] = useState<ImageData[]>([])
   const [selectedImage, setSelectedImage] = useState<ImageData | null>(null)
@@ -98,7 +137,7 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
   const loadImages = async () => {
     setLoading(true)
     try {
-      const data = await getImages(projectId, 0, 200)
+      const data = await getImages(projectId, 0, 100)
       setImages(data.images)
       if (data.images.length > 0 && !selectedImage) {
         setSelectedImage(data.images[0])
@@ -230,6 +269,10 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
     { key: 'Cores', icon: <Palette size={16} />, fn: () => analyzeColors(selectedImage!.id), color: 'bg-purple-700 hover:bg-purple-600' },
     { key: 'YOLO', icon: <Trees size={16} />, fn: () => detectObjects(selectedImage!.id), color: 'bg-cyan-700 hover:bg-cyan-600' },
     { key: 'Uso Solo', icon: <Layers size={16} />, fn: () => classifyLandUse(selectedImage!.id), color: 'bg-amber-700 hover:bg-amber-600' },
+    { key: 'NDVI', icon: <Activity size={16} />, fn: () => analyzeNDVI(selectedImage!.id), color: 'bg-teal-700 hover:bg-teal-600' },
+    { key: 'Contagem', icon: <Hash size={16} />, fn: () => analyzePlantCount(selectedImage!.id), color: 'bg-lime-700 hover:bg-lime-600' },
+    { key: 'Pragas', icon: <Bug size={16} />, fn: () => detectPestDisease(selectedImage!.id), color: 'bg-red-700 hover:bg-red-600' },
+    { key: 'Biomassa', icon: <TreePine size={16} />, fn: () => estimateBiomass(selectedImage!.id), color: 'bg-emerald-700 hover:bg-emerald-600' },
     { key: 'Features', icon: <BarChart3 size={16} />, fn: () => extractFeatures(selectedImage!.id), color: 'bg-indigo-700 hover:bg-indigo-600' },
     { key: 'Relatorio', icon: <FileText size={16} />, fn: () => generateReport(selectedImage!.id), color: 'bg-gray-600 hover:bg-gray-500' },
   ]
@@ -248,6 +291,10 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
       'object_detection': 'Deteccao de Objetos (YOLO)',
       'land_use': 'Classificacao de Uso do Solo',
       'feature_extraction': 'Extracao de Features',
+      'ndvi_proxy': 'NDVI (Indice ExG)',
+      'plant_count': 'Contagem de Plantas',
+      'pest_disease': 'Deteccao de Pragas/Doencas',
+      'biomass': 'Estimativa de Biomassa',
       'report': 'Relatorio',
       'video_analysis': 'Analise de Video',
       'video_keyframes': 'Keyframes do Video',
@@ -261,14 +308,43 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
     return 'text-yellow-400'
   }
 
-  // Overlay URL
-  const overlayUrl = selectedImage
-    ? overlayMode === 'heatmap'
-      ? getHeatmapUrl(selectedImage.id)
-      : overlayMode === 'mask'
-        ? getVegetationMaskUrl(selectedImage.id)
-        : null
-    : null
+  // Overlay: load via authenticated fetch to avoid auth issues with direct img src
+  const [overlayBlobUrl, setOverlayBlobUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Revoke previous overlay blob URL
+    if (overlayBlobUrl) {
+      URL.revokeObjectURL(overlayBlobUrl)
+      setOverlayBlobUrl(null)
+    }
+
+    if (!selectedImage || overlayMode === 'none') return
+
+    const loadOverlay = async () => {
+      const token = loadAuthToken()
+      if (!token) return
+      const url = overlayMode === 'heatmap'
+        ? getHeatmapUrl(selectedImage.id)
+        : getVegetationMaskUrl(selectedImage.id)
+      try {
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        })
+        if (response.ok) {
+          const blob = await response.blob()
+          setOverlayBlobUrl(URL.createObjectURL(blob))
+        }
+      } catch {
+        setOverlayBlobUrl(null)
+      }
+    }
+    loadOverlay()
+
+    // Cleanup on unmount
+    return () => {
+      // Will be handled by next render or unmount
+    }
+  }, [selectedImage?.id, overlayMode])
 
   if (loading) {
     return (
@@ -315,15 +391,10 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
                 <Video size={20} className="text-red-400" />
               </div>
             ) : (
-              <img
+              <AuthImg
                 src={getImageThumbnailUrl(img.id)}
                 alt={img.original_filename}
                 className="w-full h-full object-cover"
-                crossOrigin="use-credentials"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none'
-                  ;(e.target as HTMLImageElement).parentElement!.classList.add('bg-gray-800')
-                }}
               />
             )}
             {selectedImage?.id === img.id && (
@@ -397,12 +468,11 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
                   alt={selectedImage.original_filename}
                   className="w-full max-h-[400px] object-contain"
                 />
-                {overlayUrl && (
+                {overlayBlobUrl && (
                   <img
-                    src={overlayUrl}
+                    src={overlayBlobUrl}
                     alt="overlay"
                     className="absolute inset-0 w-full h-full object-contain mix-blend-screen opacity-70"
-                    crossOrigin="use-credentials"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                 )}
@@ -414,12 +484,10 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
                   <Video size={48} className="text-red-400 mx-auto mb-2" />
                   <p className="text-gray-400 text-sm">{selectedImage.original_filename}</p>
                   {imageAnalyses.some(a => a.analysis_type === 'video_analysis' && a.status === 'completed') && (
-                    <img
+                    <AuthImg
                       src={getVideoMosaicUrl(selectedImage.id)}
                       alt="Mosaico do video"
                       className="mt-4 max-h-[300px] mx-auto rounded-lg"
-                      crossOrigin="use-credentials"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                     />
                   )}
                 </div>

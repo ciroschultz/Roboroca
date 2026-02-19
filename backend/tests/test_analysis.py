@@ -211,6 +211,79 @@ async def test_delete_analysis(client: AsyncClient, auth_headers, test_project):
 
 
 @pytest.mark.asyncio
+async def test_pest_disease_detection(client: AsyncClient, auth_headers, test_project):
+    """Test pest/disease detection endpoint."""
+    image_id = await upload_test_image(client, auth_headers, test_project.id)
+
+    response = await client.post(
+        f"/analysis/pest-disease/{image_id}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["analysis_type"] == "pest_disease"
+    assert data["status"] == "completed"
+    assert "infection_rate" in data["results"]
+    assert "overall_severity" in data["results"]
+    assert "healthy_percentage" in data["results"]
+    assert "chlorosis_percentage" in data["results"]
+    assert "necrosis_percentage" in data["results"]
+    assert "affected_regions" in data["results"]
+    assert "recommendations" in data["results"]
+
+
+@pytest.mark.asyncio
+async def test_pest_disease_custom_params(client: AsyncClient, auth_headers, test_project):
+    """Test pest/disease detection with custom parameters."""
+    image_id = await upload_test_image(client, auth_headers, test_project.id)
+
+    response = await client.post(
+        f"/analysis/pest-disease/{image_id}?anomaly_threshold=3.0&min_region_area=200",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]["parameters"]["anomaly_threshold"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_biomass_estimation(client: AsyncClient, auth_headers, test_project):
+    """Test biomass estimation endpoint."""
+    image_id = await upload_test_image(client, auth_headers, test_project.id)
+
+    response = await client.post(
+        f"/analysis/biomass/{image_id}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["analysis_type"] == "biomass"
+    assert data["status"] == "completed"
+    assert "biomass_index" in data["results"]
+    assert "density_class" in data["results"]
+    assert "vegetation_coverage_pct" in data["results"]
+    assert "canopy_count" in data["results"]
+    assert "estimated_biomass_kg_ha" in data["results"]
+    assert "vigor_metrics" in data["results"]
+    assert "recommendations" in data["results"]
+    assert data["results"]["density_class"] in ["esparsa", "moderada", "densa", "muito_densa"]
+
+
+@pytest.mark.asyncio
+async def test_biomass_custom_params(client: AsyncClient, auth_headers, test_project):
+    """Test biomass estimation with custom parameters."""
+    image_id = await upload_test_image(client, auth_headers, test_project.id)
+
+    response = await client.post(
+        f"/analysis/biomass/{image_id}?min_canopy_area=100",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]["parameters"]["min_canopy_area"] == 100
+
+
+@pytest.mark.asyncio
 async def test_analysis_unauthorized(client: AsyncClient, test_project):
     """Test analysis without auth fails."""
     response = await client.post("/analysis/vegetation/1")

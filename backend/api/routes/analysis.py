@@ -3,6 +3,7 @@ Analysis Routes
 Endpoints para análise de imagens (vegetação, cobertura, saúde de plantas, etc).
 """
 
+import asyncio
 import os
 import time
 from datetime import datetime, timezone
@@ -53,6 +54,18 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
+
+# Detecção de pragas/doenças (independente de torch)
+try:
+    from backend.services.ml import detect_pest_disease
+except ImportError:
+    detect_pest_disease = None
+
+# Estimativa de biomassa (independente de torch)
+try:
+    from backend.services.ml import estimate_biomass
+except ImportError:
+    estimate_biomass = None
 
 # Serviço de geração de relatórios PDF
 try:
@@ -1083,6 +1096,157 @@ async def detect_objects(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro na detecção: {str(e)}"
+        )
+
+
+@router.post("/pest-disease/{image_id}", response_model=AnalysisResponse)
+async def detect_pests(
+    image_id: int,
+    anomaly_threshold: float = Query(2.0, ge=0.5, le=5.0),
+    min_region_area: int = Query(100, ge=10, le=10000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Detectar pragas e doencas na vegetacao.
+
+    Analisa sintomas visuais usando cor (HSV) e textura:
+    - Clorose (amarelecimento): deficiencia nutricional
+    - Necrose (manchas marrons): tecido morto
+    - Anomalias de textura: danos por insetos ou estresse
+
+    Retorna taxa de infeccao, severidade e regioes afetadas.
+    """
+    if detect_pest_disease is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Servico de deteccao de pragas nao disponivel.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deteccao de pragas disponivel apenas para imagens"
+        )
+
+    # Criar registro de analise
+    analysis = Analysis(
+        analysis_type="pest_disease",
+        status="processing",
+        image_id=image_id,
+        config={"anomaly_threshold": anomaly_threshold, "min_region_area": min_region_area}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Executar deteccao em thread separada
+        pest_results = await asyncio.to_thread(
+            detect_pest_disease,
+            image.file_path,
+            anomaly_threshold,
+            min_region_area,
+        )
+
+        processing_time = time.time() - start_time
+
+        # Atualizar analise
+        analysis.status = "completed"
+        analysis.results = pest_results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na deteccao de pragas: {str(e)}"
+        )
+
+
+@router.post("/biomass/{image_id}", response_model=AnalysisResponse)
+async def estimate_biomass_endpoint(
+    image_id: int,
+    min_canopy_area: int = Query(50, ge=10, le=5000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Estimar biomassa vegetal na imagem.
+
+    Analisa cobertura vegetal, copas individuais e vigor para
+    calcular um indice de biomassa (0-100) e estimativa em kg/ha.
+
+    Retorna indice de biomassa, classe de densidade, copas detectadas
+    e metricas de vigor.
+    """
+    if estimate_biomass is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Servico de estimativa de biomassa nao disponivel.",
+        )
+
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Estimativa de biomassa disponivel apenas para imagens"
+        )
+
+    # Criar registro de analise
+    analysis = Analysis(
+        analysis_type="biomass",
+        status="processing",
+        image_id=image_id,
+        config={"min_canopy_area": min_canopy_area}
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+
+    try:
+        # Executar estimativa em thread separada
+        biomass_results = await asyncio.to_thread(
+            estimate_biomass,
+            image.file_path,
+            min_canopy_area,
+        )
+
+        processing_time = time.time() - start_time
+
+        # Atualizar analise
+        analysis.status = "completed"
+        analysis.results = biomass_results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na estimativa de biomassa: {str(e)}"
         )
 
 

@@ -124,6 +124,18 @@ export default function Home() {
       setIsLoading(false)
     }
     checkAuth()
+
+    // Timeout de segurança: se o loading demorar mais de 15s, liberar a tela
+    const safetyTimeout = setTimeout(() => {
+      setIsLoading(prev => {
+        if (prev) {
+          console.warn('Loading timeout — forçando saída do loading')
+          return false
+        }
+        return prev
+      })
+    }, 15000)
+    return () => clearTimeout(safetyTimeout)
   }, [])
 
   // Handler para login/cadastro bem-sucedido
@@ -334,15 +346,15 @@ export default function Home() {
   const handleMenuClick = (id: string) => {
     setActiveItem(id)
     if (analysisSubmenuIds.includes(id)) {
-      // Navigate to analysis tab - use current project if already viewing one
-      const targetProject = selectedProject || projects.find(p => p.status === 'completed') || projects[0]
-      if (targetProject) {
-        setSelectedProject(targetProject as any)
+      if (selectedProject) {
+        // Already viewing a project - navigate to its analysis tab
         setProjectInitialTab('analysis')
         setAnalysisSection(id)
         setActiveView('project-detail')
       } else {
+        // No project selected - show project list so user can pick one
         setActiveView('projects')
+        toast.info('Selecione um projeto', 'Escolha um projeto para ver as análises')
       }
     } else {
       setSelectedProject(null)
@@ -432,6 +444,15 @@ export default function Home() {
             setActiveItem('projetos')
           }}
           onRefresh={() => loadProjectsFromApi(true)}
+          allProjects={projects.map(p => ({ id: p.id, name: p.name }))}
+          onProjectChange={(projectId) => {
+            const p = projects.find(pr => pr.id === projectId)
+            if (p) {
+              setSelectedProject(p)
+              setProjectInitialTab(undefined)
+              setAnalysisSection(undefined)
+            }
+          }}
         />
       )
     }

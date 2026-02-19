@@ -9,6 +9,18 @@ try:
 except ImportError:
     count_trees_by_segmentation = None
 
+# Importar detecção de pragas/doenças (não depende de torch/YOLO)
+try:
+    from backend.services.ml.pest_detector import detect_pest_disease
+except ImportError:
+    detect_pest_disease = None
+
+# Importar estimativa de biomassa (não depende de torch/YOLO)
+try:
+    from backend.services.ml.biomass_estimator import estimate_biomass
+except ImportError:
+    estimate_biomass = None
+
 # Importar com tratamento de erro para módulos que dependem de torch
 try:
     from backend.services.ml.detector import (
@@ -82,6 +94,8 @@ __all__ = [
     'detect_and_count',
     'get_detection_summary',
     'count_trees_by_segmentation',
+    'detect_pest_disease',
+    'estimate_biomass',
     # Segmenter
     'LandSegmenter',
     'segment_image',

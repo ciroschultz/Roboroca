@@ -103,10 +103,13 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
       const response = await register(data)
       onAuthSuccess(response.user)
     } catch (err: any) {
-      if (err.status === 400) {
-        setError('Este email já está cadastrado')
-      } else if (err.status === 0) {
+      if (err.status === 0) {
         setError('Erro de conexão. Verifique se o servidor está online.')
+      } else if (err.status === 400 || err.status === 409) {
+        // Use backend message if available, fallback to generic
+        setError(err.detail || 'Este email já está cadastrado')
+      } else if (err.status === 422) {
+        setError(err.detail || 'Dados inválidos. Verifique os campos e tente novamente.')
       } else {
         setError(err.detail || 'Erro ao criar conta. Tente novamente.')
       }
