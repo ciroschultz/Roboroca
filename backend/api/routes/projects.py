@@ -1130,6 +1130,8 @@ async def get_project_analysis_summary(
     vegetation_types = {}
     total_objects_detected = 0
     objects_by_class = {}
+    biomass_indices = []
+    pest_infection_rates = []
 
     for analysis in analyses:
         if not analysis.results:
@@ -1216,6 +1218,18 @@ async def get_project_analysis_summary(
                 total_objects_detected += tree_data['total_trees']
                 objects_by_class['arvore'] = objects_by_class.get('arvore', 0) + tree_data['total_trees']
 
+        # Biomassa
+        if 'biomass' in results:
+            biomass_data = results['biomass']
+            if biomass_data.get('biomass_index') is not None:
+                biomass_indices.append(biomass_data['biomass_index'])
+
+        # Pragas/doenças
+        if 'pest_disease' in results:
+            pest_data = results['pest_disease']
+            if pest_data.get('infection_rate') is not None:
+                pest_infection_rates.append(pest_data['infection_rate'])
+
     # Calcular médias
     avg_vegetation = sum(vegetation_percentages) / len(vegetation_percentages) if vegetation_percentages else 0
     avg_health = sum(health_indices) / len(health_indices) if health_indices else 0
@@ -1264,6 +1278,19 @@ async def get_project_analysis_summary(
 
         # Tipo de vegetação dominante
         "dominant_vegetation_type": dominant_vegetation_type,
+
+        # Biomassa
+        "biomass_index_avg": round(sum(biomass_indices) / len(biomass_indices), 2) if biomass_indices else None,
+        "biomass_density_class": (
+            "esparsa" if biomass_indices and sum(biomass_indices) / len(biomass_indices) < 25
+            else "moderada" if biomass_indices and sum(biomass_indices) / len(biomass_indices) < 50
+            else "densa" if biomass_indices and sum(biomass_indices) / len(biomass_indices) < 75
+            else "muito_densa" if biomass_indices
+            else None
+        ),
+
+        # Pragas/doenças
+        "pest_infection_rate_avg": round(sum(pest_infection_rates) / len(pest_infection_rates), 2) if pest_infection_rates else None,
 
         # Status do projeto
         "status": project.status
@@ -1526,6 +1553,33 @@ async def get_project_alerts(
                 "message": f"Sinais de pragas/doencas em {avg_infection:.1f}% da area vegetal",
                 "current_value": round(avg_infection, 2),
                 "threshold": 10,
+            })
+
+    # Verificar biomassa
+    biomass_indices = []
+    for analysis in analyses:
+        if analysis.results and "biomass" in analysis.results:
+            biomass_indices.append(
+                analysis.results["biomass"].get("biomass_index", 0)
+            )
+
+    if biomass_indices:
+        avg_biomass = sum(biomass_indices) / len(biomass_indices)
+        if avg_biomass < 10:
+            alerts.append({
+                "severity": "critical",
+                "metric": "biomass",
+                "message": f"Biomassa muito baixa (indice {avg_biomass:.1f}/100). Cobertura vegetal critica.",
+                "current_value": round(avg_biomass, 2),
+                "threshold": 10,
+            })
+        elif avg_biomass < 25:
+            alerts.append({
+                "severity": "warning",
+                "metric": "biomass",
+                "message": f"Biomassa esparsa (indice {avg_biomass:.1f}/100). Considere avaliar condicoes do solo.",
+                "current_value": round(avg_biomass, 2),
+                "threshold": 25,
             })
 
     return {

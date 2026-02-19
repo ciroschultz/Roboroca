@@ -28,6 +28,8 @@ import {
   Cpu,
   Pencil,
   ChevronDown,
+  Bug,
+  TreePine,
 } from 'lucide-react'
 import {
   DonutChart,
@@ -397,6 +399,10 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const visualFeatures = analysisResults.visual_features as Record<string, unknown> | undefined
   // Detecção de objetos
   const objectDetection = analysisResults.object_detection as Record<string, unknown> | undefined
+  // Pragas/doenças
+  const pestDisease = analysisResults.pest_disease as Record<string, unknown> | undefined
+  // Biomassa
+  const biomassData = analysisResults.biomass as Record<string, unknown> | undefined
   // Resumo temporal (vídeo)
   const temporalSummary = videoAnalysis?.results?.temporal_summary as Record<string, unknown> | undefined
   const videoInfo = videoAnalysis?.results?.video_info as Record<string, unknown> | undefined
@@ -1523,6 +1529,158 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {/* Estimativa de Biomassa */}
+                {biomassData && (
+                  <div id="section-biomass" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                      <TreePine size={18} className="text-emerald-400" />
+                      Estimativa de Biomassa
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Indice de Biomassa</p>
+                        <p className="text-2xl font-bold text-emerald-400">{Number((biomassData as any)?.biomass_index ?? 0).toFixed(1)}</p>
+                        <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{
+                              width: `${Math.min(Number((biomassData as any)?.biomass_index ?? 0), 100)}%`,
+                              backgroundColor: Number((biomassData as any)?.biomass_index ?? 0) >= 75 ? '#059669' :
+                                Number((biomassData as any)?.biomass_index ?? 0) >= 50 ? '#6AAF3D' :
+                                Number((biomassData as any)?.biomass_index ?? 0) >= 25 ? '#F59E0B' : '#EF4444'
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Classe de Densidade</p>
+                        <p className={`text-lg font-bold ${
+                          (biomassData as any)?.density_class === 'muito_densa' ? 'text-emerald-400' :
+                          (biomassData as any)?.density_class === 'densa' ? 'text-green-400' :
+                          (biomassData as any)?.density_class === 'moderada' ? 'text-yellow-400' : 'text-red-400'
+                        }`}>
+                          {((biomassData as any)?.density_class ?? '').replace('_', ' ')}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Biomassa Estimada</p>
+                        <p className="text-lg font-bold text-white">
+                          {Number((biomassData as any)?.estimated_biomass_kg_ha ?? 0) >= 1000
+                            ? `${(Number((biomassData as any)?.estimated_biomass_kg_ha ?? 0) / 1000).toFixed(1)} t/ha`
+                            : `${Number((biomassData as any)?.estimated_biomass_kg_ha ?? 0)} kg/ha`}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Copas Detectadas</p>
+                        <p className="text-lg font-bold text-white">{(biomassData as any)?.canopy_count ?? 0}</p>
+                      </div>
+                    </div>
+                    {/* Metricas de vigor */}
+                    {(biomassData as any)?.vigor_metrics && (
+                      <div className="grid grid-cols-3 gap-4 mb-4">
+                        <div className="p-3 bg-gray-800/30 rounded-lg">
+                          <p className="text-xs text-gray-500">Intensidade Verde</p>
+                          <p className="text-sm font-bold text-white">{Number((biomassData as any).vigor_metrics.mean_green_intensity ?? 0).toFixed(1)}</p>
+                        </div>
+                        <div className="p-3 bg-gray-800/30 rounded-lg">
+                          <p className="text-xs text-gray-500">ExG Medio</p>
+                          <p className="text-sm font-bold text-white">{Number((biomassData as any).vigor_metrics.mean_exg ?? 0).toFixed(4)}</p>
+                        </div>
+                        <div className="p-3 bg-gray-800/30 rounded-lg">
+                          <p className="text-xs text-gray-500">Variancia de Textura</p>
+                          <p className="text-sm font-bold text-white">{Number((biomassData as any).vigor_metrics.texture_variance ?? 0).toFixed(1)}</p>
+                        </div>
+                      </div>
+                    )}
+                    {/* Recomendacoes */}
+                    {(biomassData as any)?.recommendations && (biomassData as any).recommendations.length > 0 && (
+                      <div className="space-y-2">
+                        {(biomassData as any).recommendations.map((rec: string, idx: number) => (
+                          <div key={idx} className="flex items-start gap-2 p-2 bg-gray-800/20 rounded text-sm">
+                            <TreePine size={14} className="text-emerald-400 mt-0.5 shrink-0" />
+                            <span className="text-gray-300">{rec}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Deteccao de Pragas/Doencas */}
+                {pestDisease && (
+                  <div id="section-pest-disease" className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
+                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                      <Bug size={18} className="text-red-400" />
+                      Deteccao de Pragas/Doencas
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Severidade</p>
+                        <p className={`text-lg font-bold ${
+                          (pestDisease as any)?.overall_severity === 'saudavel' ? 'text-green-400' :
+                          (pestDisease as any)?.overall_severity === 'leve' ? 'text-yellow-400' :
+                          (pestDisease as any)?.overall_severity === 'moderado' ? 'text-orange-400' : 'text-red-400'
+                        }`}>
+                          {(pestDisease as any)?.overall_severity ?? 'N/A'}
+                        </p>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Taxa de Infeccao</p>
+                        <p className="text-lg font-bold text-white">{Number((pestDisease as any)?.infection_rate ?? 0).toFixed(1)}%</p>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Vegetacao Saudavel</p>
+                        <p className="text-lg font-bold text-green-400">{Number((pestDisease as any)?.healthy_percentage ?? 0).toFixed(1)}%</p>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Regioes Afetadas</p>
+                        <p className="text-lg font-bold text-white">{((pestDisease as any)?.affected_regions ?? []).length}</p>
+                      </div>
+                    </div>
+                    {/* Detalhes por tipo */}
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Clorose</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 bg-gray-700 rounded-full h-2 overflow-hidden">
+                            <div className="h-full bg-yellow-400 rounded-full" style={{ width: `${Math.min(Number((pestDisease as any)?.chlorosis_percentage ?? 0), 100)}%` }} />
+                          </div>
+                          <span className="text-xs text-white">{Number((pestDisease as any)?.chlorosis_percentage ?? 0).toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Necrose</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 bg-gray-700 rounded-full h-2 overflow-hidden">
+                            <div className="h-full bg-amber-600 rounded-full" style={{ width: `${Math.min(Number((pestDisease as any)?.necrosis_percentage ?? 0), 100)}%` }} />
+                          </div>
+                          <span className="text-xs text-white">{Number((pestDisease as any)?.necrosis_percentage ?? 0).toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-gray-800/30 rounded-lg">
+                        <p className="text-xs text-gray-500">Anomalias</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 bg-gray-700 rounded-full h-2 overflow-hidden">
+                            <div className="h-full bg-red-500 rounded-full" style={{ width: `${Math.min(Number((pestDisease as any)?.anomaly_percentage ?? 0), 100)}%` }} />
+                          </div>
+                          <span className="text-xs text-white">{Number((pestDisease as any)?.anomaly_percentage ?? 0).toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Recomendacoes */}
+                    {(pestDisease as any)?.recommendations && (pestDisease as any).recommendations.length > 0 && (
+                      <div className="space-y-2">
+                        {(pestDisease as any).recommendations.map((rec: string, idx: number) => (
+                          <div key={idx} className="flex items-start gap-2 p-2 bg-gray-800/20 rounded text-sm">
+                            <Bug size={14} className="text-red-400 mt-0.5 shrink-0" />
+                            <span className="text-gray-300">{rec}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
