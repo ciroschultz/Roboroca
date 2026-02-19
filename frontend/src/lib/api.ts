@@ -654,6 +654,11 @@ export async function getProjectAnalysisSummary(projectId: number): Promise<{
   land_use_summary: Record<string, number>
   segmentation_summary: Record<string, number>
   dominant_vegetation_type: string | null
+  // Biomassa
+  biomass_index_avg: number | null
+  biomass_density_class: string | null
+  // Pragas/doencas
+  pest_infection_rate_avg: number | null
   status: string
 }> {
   return apiRequest(`/projects/${projectId}/analysis-summary`)

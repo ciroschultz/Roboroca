@@ -17,6 +17,10 @@ import {
   CheckCircle,
   Clock,
   AlertTriangle,
+  Leaf,
+  Thermometer,
+  TreePine,
+  Bug,
 } from 'lucide-react'
 import { loadAuthToken } from '@/lib/api'
 
@@ -29,6 +33,19 @@ interface Project {
   imageCount: number
   area: number
   thumbnail?: string
+  results?: {
+    vegetationCoverage: number
+    healthIndex: number
+    plantCount: number
+    healthyPercentage: number
+    stressedPercentage: number
+    criticalPercentage: number
+    landUse: { name: string; value: number; color: string }[]
+    heightDistribution: { altura: string; quantidade: number }[]
+    biomassIndexAvg?: number | null
+    biomassDensityClass?: string | null
+    pestInfectionRateAvg?: number | null
+  }
 }
 
 interface ProjectsListProps {
@@ -206,7 +223,11 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
             <div
               key={project.id}
               onClick={() => onProjectClick(project)}
-              className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden cursor-pointer card-hover group"
+              className={`bg-[#1a1a2e] rounded-xl overflow-hidden cursor-pointer card-hover group ${
+                project.results && project.results.criticalPercentage > 10
+                  ? 'border border-red-700/60'
+                  : 'border border-gray-700/50'
+              }`}
             >
               {/* Thumbnail */}
               <div className="h-36 bg-gradient-to-br from-[#6AAF3D]/20 to-[#1B3A5C]/20 relative">
@@ -255,6 +276,49 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
                     {project.imageCount} {project.imageCount === 1 ? 'imagem' : 'imagens'}
                   </span>
                 </div>
+
+                {/* Metrics */}
+                {project.results && (
+                  <div className="mt-3 space-y-2">
+                    {/* Health bar */}
+                    <div className="flex h-1.5 rounded-full overflow-hidden bg-gray-700/50">
+                      <div className="bg-green-500" style={{ width: `${project.results.healthyPercentage}%` }} />
+                      <div className="bg-yellow-500" style={{ width: `${project.results.stressedPercentage}%` }} />
+                      <div className="bg-red-500" style={{ width: `${project.results.criticalPercentage}%` }} />
+                    </div>
+                    {/* Badges */}
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                        project.results.healthIndex >= 70 ? 'bg-green-900/40 text-green-400' :
+                        project.results.healthIndex >= 50 ? 'bg-yellow-900/40 text-yellow-400' :
+                        'bg-red-900/40 text-red-400'
+                      }`}>
+                        <Thermometer size={10} />
+                        {Math.round(project.results.healthIndex)}%
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-green-900/40 text-green-400">
+                        <Leaf size={10} />
+                        {project.results.vegetationCoverage.toFixed(0)}%
+                      </span>
+                      {project.results.biomassIndexAvg != null && (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-emerald-900/40 text-emerald-400">
+                          <TreePine size={10} />
+                          {project.results.biomassIndexAvg.toFixed(0)}/100
+                        </span>
+                      )}
+                      {project.results.pestInfectionRateAvg != null && (
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                          project.results.pestInfectionRateAvg > 10
+                            ? 'bg-red-900/40 text-red-400'
+                            : 'bg-gray-700/50 text-gray-400'
+                        }`}>
+                          <Bug size={10} />
+                          {project.results.pestInfectionRateAvg.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -268,6 +332,9 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Data</th>
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Fonte</th>
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Área</th>
+                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Saúde</th>
+                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Biomassa</th>
+                <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Pragas</th>
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">Status</th>
                 <th className="text-right py-3 px-4 text-gray-400 font-medium text-sm">Ações</th>
               </tr>
@@ -300,6 +367,40 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
                     </span>
                   </td>
                   <td className="py-3 px-4 text-gray-400 text-sm">{project.area} ha</td>
+                  <td className="py-3 px-4">
+                    {project.results ? (
+                      <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${
+                        project.results.healthIndex >= 70 ? 'bg-green-900/40 text-green-400' :
+                        project.results.healthIndex >= 50 ? 'bg-yellow-900/40 text-yellow-400' :
+                        'bg-red-900/40 text-red-400'
+                      }`}>
+                        <Thermometer size={12} />
+                        {Math.round(project.results.healthIndex)}%
+                      </span>
+                    ) : (
+                      <span className="text-gray-600 text-xs">—</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4">
+                    {project.results?.biomassIndexAvg != null ? (
+                      <span className="text-emerald-400 text-sm font-medium">
+                        {project.results.biomassIndexAvg.toFixed(0)}/100
+                      </span>
+                    ) : (
+                      <span className="text-gray-600 text-xs">—</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4">
+                    {project.results?.pestInfectionRateAvg != null ? (
+                      <span className={`text-sm font-medium ${
+                        project.results.pestInfectionRateAvg > 10 ? 'text-red-400' : 'text-gray-400'
+                      }`}>
+                        {project.results.pestInfectionRateAvg.toFixed(1)}%
+                      </span>
+                    ) : (
+                      <span className="text-gray-600 text-xs">—</span>
+                    )}
+                  </td>
                   <td className="py-3 px-4">
                     <div className={`flex items-center gap-1 text-sm ${
                       project.status === 'completed' ? 'text-green-400' :
