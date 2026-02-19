@@ -48,6 +48,10 @@ import {
   ArrowRight,
   Menu,
   X,
+  TreePine,
+  Bug,
+  Layers,
+  BarChart3,
 } from 'lucide-react'
 
 // Tipo de projeto
@@ -72,6 +76,9 @@ interface Project {
     criticalPercentage: number
     landUse: { name: string; value: number; color: string }[]
     heightDistribution: { altura: string; quantidade: number }[]
+    biomassIndexAvg?: number | null
+    biomassDensityClass?: string | null
+    pestInfectionRateAvg?: number | null
   }
 }
 
@@ -177,7 +184,7 @@ export default function Home() {
           // Tentar carregar resumo de análise para projetos completos ou em processamento
           // (para manter dados anteriores enquanto re-analisa)
           let results: Project['results'] = undefined
-          let summary: { analyzed_images: number; vegetation_coverage_avg: number; health_index_avg: number; total_objects_detected: number; healthy_percentage: number; stressed_percentage: number; critical_percentage: number; land_use_summary: Record<string, number>; total_area_ha: number } | null = null
+          let summary: { analyzed_images: number; vegetation_coverage_avg: number; health_index_avg: number; total_objects_detected: number; healthy_percentage: number; stressed_percentage: number; critical_percentage: number; land_use_summary: Record<string, number>; total_area_ha: number; biomass_index_avg?: number | null; biomass_density_class?: string | null; pest_infection_rate_avg?: number | null } | null = null
 
           if (p.status === 'completed' || p.status === 'processing') {
             try {
@@ -197,6 +204,9 @@ export default function Home() {
                     color: getLandUseColor(name)
                   })),
                   heightDistribution: [], // Placeholder - não implementado ainda
+                  biomassIndexAvg: summary.biomass_index_avg,
+                  biomassDensityClass: summary.biomass_density_class,
+                  pestInfectionRateAvg: summary.pest_infection_rate_avg,
                 }
               }
             } catch {
@@ -307,6 +317,30 @@ export default function Home() {
   const avgHealthyPct = completedProjects.length > 0
     ? completedProjects.reduce((sum, p) => sum + (p.results?.healthyPercentage || 0), 0) / completedProjects.length
     : 0
+
+  // Agregações de biomassa e pragas
+  const projectsWithBiomass = completedProjects.filter(p => p.results?.biomassIndexAvg != null)
+  const avgBiomassIndex = projectsWithBiomass.length > 0
+    ? projectsWithBiomass.reduce((sum, p) => sum + (p.results?.biomassIndexAvg || 0), 0) / projectsWithBiomass.length
+    : 0
+  const projectsWithPest = completedProjects.filter(p => p.results?.pestInfectionRateAvg != null)
+  const avgPestRate = projectsWithPest.length > 0
+    ? projectsWithPest.reduce((sum, p) => sum + (p.results?.pestInfectionRateAvg || 0), 0) / projectsWithPest.length
+    : 0
+  // Classe de densidade mais frequente
+  const densityCounts: Record<string, number> = {}
+  completedProjects.forEach(p => {
+    const dc = p.results?.biomassDensityClass
+    if (dc) densityCounts[dc] = (densityCounts[dc] || 0) + 1
+  })
+  const dominantDensityClass = Object.entries(densityCounts).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A'
+  // Total de tipos de análise distintos
+  const totalAnalysisTypes = dashboardStats?.analyses_by_type ? Object.keys(dashboardStats.analyses_by_type).length : 0
+
+  // Atalhos rápidos: projetos com piores métricas
+  const projectWithLowestHealth = [...completedProjects].sort((a, b) => (a.results?.healthIndex || 0) - (b.results?.healthIndex || 0))[0]
+  const projectWithMostPest = [...completedProjects].sort((a, b) => (b.results?.pestInfectionRateAvg || 0) - (a.results?.pestInfectionRateAvg || 0))[0]
+  const projectWithLowestBiomass = [...completedProjects].sort((a, b) => (a.results?.biomassIndexAvg || 100) - (b.results?.biomassIndexAvg || 100))[0]
 
   // Agrega dados de uso do solo de todos os projetos
   const aggregatedLandUse = completedProjects.reduce((acc, project) => {
@@ -693,6 +727,140 @@ export default function Home() {
                 color="blue"
               />
             </div>
+
+            {/* Terceira linha de cards: Biomassa, Pragas, Densidade, Tipos de Análise */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <StatCard
+                title="Biomassa Media"
+                value={avgBiomassIndex.toFixed(1)}
+                unit="/100"
+                icon={<TreePine size={24} />}
+                color="green"
+              />
+              <StatCard
+                title="Taxa de Pragas"
+                value={avgPestRate.toFixed(1)}
+                unit="%"
+                icon={<Bug size={24} />}
+                color={avgPestRate > 20 ? 'red' : avgPestRate > 10 ? 'yellow' : 'green'}
+              />
+              <StatCard
+                title="Densidade Predominante"
+                value={dominantDensityClass.replace('_', ' ')}
+                icon={<Layers size={24} />}
+                color="yellow"
+              />
+              <StatCard
+                title="Tipos de Analise"
+                value={totalAnalysisTypes}
+                unit="tipos"
+                icon={<BarChart3 size={24} />}
+                color="purple"
+              />
+            </div>
+
+            {/* Análises por Tipo + Atalhos Rápidos */}
+            {(dashboardStats?.analyses_by_type && Object.keys(dashboardStats.analyses_by_type).length > 0) && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                {/* Horizontal Bar Chart - Análises por Tipo */}
+                <HorizontalBarChart
+                  data={Object.entries(dashboardStats.analyses_by_type).map(([type, count]) => ({
+                    name: type === 'full_report' ? 'Relatório Completo' :
+                          type === 'vegetation_coverage' ? 'Cobertura Vegetal' :
+                          type === 'plant_health' ? 'Saúde' :
+                          type === 'color_analysis' ? 'Cores' :
+                          type === 'object_detection' ? 'Detecção YOLO' :
+                          type === 'land_use' ? 'Uso do Solo' :
+                          type === 'feature_extraction' ? 'Features' :
+                          type === 'video_analysis' ? 'Vídeo' :
+                          type === 'pest_disease' ? 'Pragas' :
+                          type === 'biomass' ? 'Biomassa' :
+                          type === 'ndvi_proxy' ? 'NDVI/ExG' :
+                          type.replace(/_/g, ' '),
+                    value: count,
+                  }))}
+                  title="Analises por Tipo"
+                  dataKey="value"
+                  nameKey="name"
+                  color="#6AAF3D"
+                />
+
+                {/* Atalhos Rápidos */}
+                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-5">
+                  <h3 className="text-white font-semibold mb-4">Atalhos Rapidos</h3>
+                  <div className="space-y-3">
+                    {projectWithLowestHealth && projectWithLowestHealth.results && (
+                      <div
+                        onClick={() => handleProjectClick(projectWithLowestHealth)}
+                        className="flex items-center justify-between p-3 bg-red-900/10 border border-red-700/20 rounded-lg cursor-pointer hover:bg-red-900/20 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-red-500/20 rounded-lg">
+                            <Thermometer className="text-red-400" size={18} />
+                          </div>
+                          <div>
+                            <p className="text-white text-sm font-medium">Menor Saude</p>
+                            <p className="text-gray-500 text-xs">{projectWithLowestHealth.name}</p>
+                          </div>
+                        </div>
+                        <span className="text-red-400 text-sm font-bold">{projectWithLowestHealth.results.healthIndex.toFixed(0)}%</span>
+                      </div>
+                    )}
+                    {projectWithMostPest && projectWithMostPest.results?.pestInfectionRateAvg != null && projectWithMostPest.results.pestInfectionRateAvg > 0 && (
+                      <div
+                        onClick={() => handleProjectClick(projectWithMostPest)}
+                        className="flex items-center justify-between p-3 bg-orange-900/10 border border-orange-700/20 rounded-lg cursor-pointer hover:bg-orange-900/20 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-orange-500/20 rounded-lg">
+                            <Bug className="text-orange-400" size={18} />
+                          </div>
+                          <div>
+                            <p className="text-white text-sm font-medium">Mais Pragas</p>
+                            <p className="text-gray-500 text-xs">{projectWithMostPest.name}</p>
+                          </div>
+                        </div>
+                        <span className="text-orange-400 text-sm font-bold">{projectWithMostPest.results.pestInfectionRateAvg.toFixed(1)}%</span>
+                      </div>
+                    )}
+                    {projectWithLowestBiomass && projectWithLowestBiomass.results?.biomassIndexAvg != null && (
+                      <div
+                        onClick={() => handleProjectClick(projectWithLowestBiomass)}
+                        className="flex items-center justify-between p-3 bg-amber-900/10 border border-amber-700/20 rounded-lg cursor-pointer hover:bg-amber-900/20 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-amber-500/20 rounded-lg">
+                            <TreePine className="text-amber-400" size={18} />
+                          </div>
+                          <div>
+                            <p className="text-white text-sm font-medium">Menor Biomassa</p>
+                            <p className="text-gray-500 text-xs">{projectWithLowestBiomass.name}</p>
+                          </div>
+                        </div>
+                        <span className="text-amber-400 text-sm font-bold">{projectWithLowestBiomass.results.biomassIndexAvg.toFixed(0)}/100</span>
+                      </div>
+                    )}
+                    {projects.length > 0 && (
+                      <div
+                        onClick={() => handleProjectClick(projects[0])}
+                        className="flex items-center justify-between p-3 bg-blue-900/10 border border-blue-700/20 rounded-lg cursor-pointer hover:bg-blue-900/20 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-blue-500/20 rounded-lg">
+                            <Clock className="text-blue-400" size={18} />
+                          </div>
+                          <div>
+                            <p className="text-white text-sm font-medium">Ultimo Analisado</p>
+                            <p className="text-gray-500 text-xs">{projects[0].name}</p>
+                          </div>
+                        </div>
+                        <ArrowRight className="text-blue-400" size={18} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Cards de alertas e acesso rápido */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
