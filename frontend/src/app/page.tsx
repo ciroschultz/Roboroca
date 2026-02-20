@@ -173,7 +173,7 @@ export default function Home() {
     }
   }
 
-  const loadProjectsFromApi = async (silent = false) => {
+  const loadProjectsFromApi = async (silent = false): Promise<Project[]> => {
     try {
       if (!silent) setIsLoading(true)
       const response = await getProjects(0, 100)
@@ -254,12 +254,14 @@ export default function Home() {
       )
 
       setProjects(apiProjects)
+      return apiProjects
     } catch (error) {
       console.error('Erro ao carregar projetos:', error)
       if (!silent) {
         toast.error('Erro ao carregar projetos', 'Verifique sua conexao e tente novamente')
       }
       setProjects([])
+      return []
     } finally {
       if (!silent) setIsLoading(false)
     }
@@ -375,11 +377,15 @@ export default function Home() {
   ] : []
 
   // IDs dos submenus de análise na sidebar
-  const analysisSubmenuIds = ['cobertura', 'saude-indice', 'uso-solo', 'contagem', 'saude', 'altura']
+  const analysisSubmenuIds = ['cobertura', 'saude-indice', 'uso-solo', 'contagem', 'saude', 'pragas', 'biomassa', 'ndvi', 'cores']
 
   const handleMenuClick = (id: string) => {
     setActiveItem(id)
-    if (analysisSubmenuIds.includes(id)) {
+    if (id === 'comparacao') {
+      // Comparar Projetos - abre a tela de comparação
+      setSelectedProject(null)
+      setActiveView('comparison')
+    } else if (analysisSubmenuIds.includes(id)) {
       if (selectedProject) {
         // Already viewing a project - navigate to its analysis tab
         setProjectInitialTab('analysis')
@@ -395,7 +401,6 @@ export default function Home() {
       if (id === 'dashboard') setActiveView('dashboard')
       else if (id === 'upload') setActiveView('upload')
       else if (id === 'mapa') setActiveView('map')
-      else if (id === 'comparacao') setActiveView('comparison')
       else if (id === 'relatorios') setActiveView('reports')
       else if (id === 'projetos') setActiveView('projects')
       else if (id === 'configuracoes') setActiveView('settings')
@@ -452,14 +457,22 @@ export default function Home() {
   const handleUploadComplete = async (projectId: number) => {
     setIsCreatingProject(true)
 
-    // Recarregar projetos do backend
-    await loadProjectsFromApi()
+    // Recarregar projetos do backend e usar retorno direto
+    const loadedProjects = await loadProjectsFromApi()
 
     setIsCreatingProject(false)
 
-    // Ir para a página de projetos
-    setActiveItem('projetos')
-    setActiveView('projects')
+    // Encontrar o projeto recém-criado e redirecionar para aba mapa
+    const newProject = loadedProjects.find(p => p.id === String(projectId))
+    if (newProject) {
+      setSelectedProject(newProject)
+      setProjectInitialTab('map')
+      setActiveView('project-detail')
+    } else {
+      // Fallback: ir para projetos
+      setActiveItem('projetos')
+      setActiveView('projects')
+    }
   }
 
   const renderContent = () => {
@@ -1094,7 +1107,7 @@ export default function Home() {
       case 'upload': return { title: 'Upload de Imagens', subtitle: 'Envie imagens de drone ou satélite para criar um novo projeto' }
       case 'map': return { title: 'Visualizar Mapa', subtitle: 'Visualize e analise as camadas geoespaciais' }
       case 'reports': return { title: 'Relatórios', subtitle: 'Gerencie e baixe seus relatórios' }
-      case 'comparison': return { title: 'Comparação de Projetos', subtitle: 'Compare metricas entre todos os projetos' }
+      case 'comparison': return { title: 'Comparação de Análises', subtitle: 'Compare dados e metricas entre todos os projetos' }
       case 'projects': return { title: 'Meus Projetos', subtitle: `${projects.length} projeto${projects.length !== 1 ? 's' : ''} cadastrado${projects.length !== 1 ? 's' : ''}` }
       case 'settings': return { title: 'Configurações', subtitle: 'Gerencie sua conta e preferências' }
       case 'help': return { title: 'Ajuda', subtitle: 'Central de suporte e documentação' }

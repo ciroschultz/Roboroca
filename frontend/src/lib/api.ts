@@ -832,6 +832,58 @@ export async function downloadAnalysisPDF(analysisId: number, filename?: string)
 }
 
 // ============================================
+// ROI - Region of Interest
+// ============================================
+
+/**
+ * Analisar Região de Interesse (ROI) de uma imagem
+ */
+export async function analyzeROI(
+  imageId: number,
+  roiPolygon: number[][],
+  analyses: string[] = ['vegetation', 'health', 'plant_count'],
+): Promise<Analysis> {
+  return apiRequest(`/analysis/roi/${imageId}`, {
+    method: 'POST',
+    body: JSON.stringify({ roi_polygon: roiPolygon, analyses }),
+  })
+}
+
+// ============================================
+// UTM INFO & OVERLAYS
+// ============================================
+
+export interface UTMInfo {
+  has_gps: boolean
+  image_id: number
+  utm_zone?: string
+  center?: { easting: number; northing: number }
+  corners?: {
+    center: { easting: number; northing: number }
+    top_left: { easting: number; northing: number }
+    top_right: { easting: number; northing: number }
+    bottom_left: { easting: number; northing: number }
+    bottom_right: { easting: number; northing: number }
+  }
+  gsd_m?: number
+  gsd_cm?: number
+}
+
+/**
+ * Obter informações UTM de uma imagem
+ */
+export async function getImageUTMInfo(imageId: number): Promise<UTMInfo> {
+  return apiRequest(`/images/${imageId}/utm-info`)
+}
+
+/**
+ * Obter URL do overlay de análise (trees, pests, water)
+ */
+export function getOverlayUrl(imageId: number, overlayType: string): string {
+  return `${API_BASE_URL}/analysis/overlay/${imageId}?overlay_type=${overlayType}`
+}
+
+// ============================================
 // ENRICHED DATA - Dados Enriquecidos
 // ============================================
 

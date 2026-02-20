@@ -4,15 +4,21 @@ Endpoints para análise de imagens (vegetação, cobertura, saúde de plantas, e
 """
 
 import asyncio
+import io
+import logging
 import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+
+logger = logging.getLogger(__name__)
 
 from backend.core.database import get_db
 from backend.core.config import settings
@@ -37,6 +43,7 @@ from backend.services.image_processing import (
     detect_vegetation_mask,
     image_to_numpy,
     numpy_to_image,
+    apply_roi_mask,
 )
 from PIL import Image as PILImage
 import numpy as np
@@ -1680,6 +1687,288 @@ async def get_video_mosaic(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao gerar mosaico: {str(e)}"
         )
+
+
+# ============================================
+# ENDPOINT ROI (Region of Interest)
+# ============================================
+
+
+class ROIRequest(BaseModel):
+    roi_polygon: list[list[float]] = Field(..., min_length=3)
+    analyses: list[str] = Field(
+        default=["vegetation", "health", "plant_count"],
+        description="Análises a executar dentro do ROI",
+    )
+
+
+@router.post("/roi/{image_id}", response_model=AnalysisResponse)
+async def analyze_roi(
+    image_id: int,
+    body: ROIRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Analisar uma Região de Interesse (ROI) na imagem.
+
+    Desenhe um polígono sobre a imagem e execute análises somente dentro do perímetro.
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if not is_image_file(image.original_filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Análise ROI disponível apenas para imagens",
+        )
+
+    if len(body.roi_polygon) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Polígono ROI precisa de pelo menos 3 pontos",
+        )
+
+    # Criar registro de análise
+    analysis = Analysis(
+        analysis_type="roi_analysis",
+        status="processing",
+        image_id=image_id,
+        config={"roi_polygon": body.roi_polygon, "analyses": body.analyses},
+    )
+    db.add(analysis)
+    await db.commit()
+    await db.refresh(analysis)
+
+    start_time = time.time()
+    tmp_path = None
+
+    try:
+        # Aplicar máscara ROI
+        masked_array, roi_metadata = await asyncio.to_thread(
+            apply_roi_mask, image.file_path, body.roi_polygon
+        )
+
+        # Salvar imagem mascarada em temp file
+        masked_img = PILImage.fromarray(masked_array)
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(tmp_fd)
+        masked_img.save(tmp_path, "JPEG", quality=90)
+
+        results: dict = {"roi_metadata": roi_metadata}
+
+        # Executar análises selecionadas na imagem mascarada
+        if "vegetation" in body.analyses:
+            try:
+                basic = await asyncio.to_thread(run_basic_analysis, tmp_path)
+                results["vegetation"] = basic.get("coverage", {})
+            except Exception as e:
+                results["vegetation"] = {"error": str(e)}
+
+        if "health" in body.analyses:
+            try:
+                health = await asyncio.to_thread(estimate_vegetation_health, masked_array)
+                results["health"] = health
+            except Exception as e:
+                results["health"] = {"error": str(e)}
+
+        if "plant_count" in body.analyses:
+            try:
+                from backend.services.ml.tree_counter import count_trees_by_segmentation
+                count = await asyncio.to_thread(count_trees_by_segmentation, tmp_path)
+                results["plant_count"] = {
+                    "total_count": count["total_trees"],
+                    "coverage_percentage": count["coverage_percentage"],
+                    "trees": count["trees"],
+                }
+            except Exception as e:
+                results["plant_count"] = {"error": str(e)}
+
+        if "pest_disease" in body.analyses and detect_pest_disease is not None:
+            try:
+                pest = await asyncio.to_thread(detect_pest_disease, tmp_path)
+                results["pest_disease"] = pest
+            except Exception as e:
+                results["pest_disease"] = {"error": str(e)}
+
+        if "biomass" in body.analyses and estimate_biomass is not None:
+            try:
+                bio = await asyncio.to_thread(estimate_biomass, tmp_path)
+                results["biomass"] = bio
+            except Exception as e:
+                results["biomass"] = {"error": str(e)}
+
+        processing_time = time.time() - start_time
+
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.processing_time_seconds = round(processing_time, 2)
+        analysis.completed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(analysis)
+
+        return analysis
+
+    except Exception as e:
+        analysis.status = "error"
+        analysis.error_message = str(e)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro na análise ROI: {str(e)}",
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+# ============================================
+# ENDPOINT OVERLAY (Trees / Pests / Water)
+# ============================================
+
+
+@router.get("/overlay/{image_id}")
+async def get_analysis_overlay(
+    image_id: int,
+    overlay_type: str = Query(..., description="Tipo: trees, pests, water"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Gerar overlay PNG RGBA transparente para uma imagem analisada.
+
+    Usa dados já existentes do full_report (não re-analisa).
+    """
+    image = await get_user_image(image_id, current_user, db)
+
+    if overlay_type not in ("trees", "pests", "water"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="overlay_type deve ser: trees, pests ou water",
+        )
+
+    # Buscar análise full_report ou específica
+    result = await db.execute(
+        select(Analysis)
+        .where(Analysis.image_id == image_id)
+        .where(
+            Analysis.image.has(Image.project.has(Project.owner_id == current_user.id))
+        )
+        .where(Analysis.status == "completed")
+        .order_by(Analysis.completed_at.desc())
+    )
+    analyses = result.scalars().all()
+
+    if not analyses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nenhuma análise completada encontrada para esta imagem",
+        )
+
+    # Dimensões da imagem
+    img_w = image.width or 800
+    img_h = image.height or 600
+
+    # Encontrar dados relevantes
+    overlay_data = None
+    for a in analyses:
+        r = a.results or {}
+        if overlay_type == "trees":
+            # Procurar em full_report ou plant_count
+            if "plant_count" in r and "locations" in r["plant_count"]:
+                overlay_data = {"trees": r["plant_count"]["locations"]}
+                break
+            if "tree_count" in r and "trees" in r["tree_count"]:
+                overlay_data = {"trees": r["tree_count"]["trees"]}
+                break
+            if a.analysis_type == "plant_count" and "locations" in r:
+                overlay_data = {"trees": r["locations"]}
+                break
+        elif overlay_type == "pests":
+            if "pest_disease" in r and "affected_regions" in r.get("pest_disease", {}):
+                overlay_data = {"regions": r["pest_disease"]["affected_regions"]}
+                break
+            if a.analysis_type == "pest_disease" and "affected_regions" in r:
+                overlay_data = {"regions": r["affected_regions"]}
+                break
+        elif overlay_type == "water":
+            if "land_use" in r:
+                water_pct = r["land_use"].get("agua", r["land_use"].get("water", 0))
+                if water_pct > 0:
+                    overlay_data = {"water_percentage": water_pct}
+                    break
+
+    if overlay_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dados de overlay '{overlay_type}' não encontrados nas análises",
+        )
+
+    # Gerar overlay PNG RGBA
+    try:
+        overlay = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+
+        if overlay_type == "trees":
+            trees = overlay_data.get("trees", [])
+            for tree in trees:
+                center = tree.get("center")
+                if not center:
+                    continue
+                cx, cy = int(center[0]), int(center[1])
+                radius = max(5, int(tree.get("area", 200) ** 0.5 / 2))
+                # Desenhar círculo verde
+                _draw_circle(overlay, cx, cy, radius, (34, 197, 94, 160))
+
+        elif overlay_type == "pests":
+            regions = overlay_data.get("regions", [])
+            for region in regions:
+                bbox = region.get("bbox")
+                if not bbox or len(bbox) < 4:
+                    continue
+                x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                x1 = max(0, min(x1, img_w - 1))
+                y1 = max(0, min(y1, img_h - 1))
+                x2 = max(0, min(x2, img_w - 1))
+                y2 = max(0, min(y2, img_h - 1))
+                overlay[y1:y2, x1:x2] = [239, 68, 68, 120]  # vermelho semi-transparente
+
+        elif overlay_type == "water":
+            # Overlay azul simples (placeholder — dados completos precisariam de segmentação pixel-level)
+            overlay[:, :] = [59, 130, 246, 40]  # azul muito sutil como base
+
+        overlay_img = PILImage.fromarray(overlay, "RGBA")
+        buf = io.BytesIO()
+        overlay_img.save(buf, format="PNG")
+        buf.seek(0)
+
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao gerar overlay: {str(e)}",
+        )
+
+
+def _draw_circle(img: np.ndarray, cx: int, cy: int, radius: int, color: tuple):
+    """Desenha círculo preenchido em array RGBA."""
+    h, w = img.shape[:2]
+    y_min = max(0, cy - radius)
+    y_max = min(h, cy + radius + 1)
+    x_min = max(0, cx - radius)
+    x_max = min(w, cx + radius + 1)
+
+    for y in range(y_min, y_max):
+        for x in range(x_min, x_max):
+            if (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2:
+                img[y, x] = color
 
 
 # ============================================

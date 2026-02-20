@@ -38,6 +38,10 @@ from backend.services.image_processing.analyzer import (
     run_basic_analysis,
 )
 
+from backend.services.image_processing.roi_masker import (
+    apply_roi_mask,
+)
+
 from backend.services.image_processing.video import (
     check_opencv,
     get_video_metadata,
@@ -78,6 +82,8 @@ __all__ = [
     'estimate_vegetation_health',
     'generate_vegetation_heatmap',
     'run_basic_analysis',
+    # ROI Masker
+    'apply_roi_mask',
     # Video
     'check_opencv',
     'get_video_metadata',

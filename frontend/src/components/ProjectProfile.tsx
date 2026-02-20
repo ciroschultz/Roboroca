@@ -117,7 +117,10 @@ const sectionMap: Record<string, string> = {
   'uso-solo': 'section-scene-classification',
   'contagem': 'section-object-detection',
   'saude': 'section-vegetation-type',
-  'altura': 'section-summary',
+  'pragas': 'section-pest-disease',
+  'biomassa': 'section-biomass',
+  'ndvi': 'section-ndvi',
+  'cores': 'section-colors',
 }
 
 export default function ProjectProfile({ project, onBack, onRefresh, initialTab, analysisSection, allProjects, onProjectChange }: ProjectProfileProps) {
@@ -285,7 +288,13 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
     fetchTimeline()
   }, [project.id, fetchTimeline])
 
-  const handleStartAnalysis = async () => {
+  const handleStartAnalysis = () => {
+    // Redirecionar para aba mapa para delimitar perímetro antes de analisar
+    setActiveTab('map')
+    toast.info('Delimite o perimetro', 'Desenhe a area de interesse e clique em "Analisar Projeto Completo"')
+  }
+
+  const handleRunAnalysis = async () => {
     try {
       setIsReanalyzing(true)
       const result = await analyzeProject(Number(project.id))
@@ -328,8 +337,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
       })
       pollingRef.current = setInterval(pollProgress, 5000)
       onRefresh?.()
-    } catch (err) {
-      console.error('Erro ao re-analisar:', err)
+    } catch {
       toast.error('Erro na re-analise', 'Falha ao iniciar re-analise. Tente novamente.')
     } finally {
       setIsReanalyzing(false)
@@ -627,14 +635,14 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Analise pendente</h3>
             <p className="text-gray-400 text-center max-w-md mb-6">
-              Este projeto possui arquivos carregados mas ainda nao foi analisado.
-              Clique no botao abaixo para iniciar a analise com algoritmos de Machine Learning.
+              Delimite o perimetro de interesse no mapa e depois inicie a analise.
             </p>
             <button
               onClick={handleStartAnalysis}
-              className="px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium text-lg mb-8"
+              className="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-medium text-lg mb-8 flex items-center gap-2"
             >
-              Iniciar Analise
+              <MapPin size={20} />
+              Delimitar Perimetro e Analisar
             </button>
 
             {/* Dados ambientais mesmo em projetos pendentes */}
@@ -829,10 +837,11 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
               Ocorreu um erro durante o processamento das imagens. Tente iniciar a analise novamente.
             </p>
             <button
-              onClick={handleStartAnalysis}
-              className="px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium"
+              onClick={handleRunAnalysis}
+              disabled={isReanalyzing}
+              className="px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] disabled:bg-gray-600 text-white rounded-lg transition-colors font-medium"
             >
-              Tentar Novamente
+              {isReanalyzing ? 'Iniciando...' : 'Tentar Novamente'}
             </button>
           </div>
         ) : activeTab === 'overview' ? (
@@ -1287,14 +1296,15 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                 <BarChart3 size={48} className="text-blue-400" />
               </div>
               <h3 className="text-xl font-semibold text-white mb-2">Sem dados de analise</h3>
-              <p className="text-gray-400 text-center max-w-md mb-6">
-                Este projeto ainda nao possui resultados de analise. Inicie uma analise para ver os resultados.
+              <p className="text-gray-400 text-center max-w-md mb-4">
+                Delimite o perimetro de interesse no mapa e depois inicie a analise.
               </p>
               <button
                 onClick={handleStartAnalysis}
-                className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium"
+                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
               >
-                Iniciar Analise
+                <MapPin size={16} />
+                Delimitar Perimetro e Analisar
               </button>
             </div>
           )
@@ -1366,13 +1376,14 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
               <div className="flex flex-col items-center justify-center py-16">
                 <Cpu size={48} className="text-gray-600 mb-4" />
                 <h3 className="text-lg text-white mb-2">Sem análises ML disponíveis</h3>
-                <p className="text-gray-500 text-sm mb-4">Inicie uma análise para ver resultados de Machine Learning.</p>
+                <p className="text-gray-500 text-sm mb-4">Delimite o perimetro no mapa e inicie a analise.</p>
                 <button
                   onClick={handleStartAnalysis}
                   disabled={isReanalyzing}
-                  className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] disabled:bg-gray-600 text-white rounded-lg transition-colors"
+                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
-                  {isReanalyzing ? 'Iniciando...' : 'Iniciar Análise'}
+                  <MapPin size={16} />
+                  {isReanalyzing ? 'Iniciando...' : 'Delimitar e Analisar'}
                 </button>
               </div>
             ) : (

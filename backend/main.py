@@ -15,7 +15,27 @@ from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 
 from backend.api.routes import health, images, projects, analysis, auth, annotations
 from backend.core.config import settings
-from backend.core.database import init_db, close_db
+from backend.core.database import init_db, close_db, async_session_maker
+
+
+async def recover_stuck_projects():
+    """Recuperar projetos presos em 'processing' de execuções anteriores."""
+    try:
+        from sqlalchemy import select, update
+        from backend.models.project import Project
+
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(Project).where(Project.status == "processing")
+            )
+            stuck = result.scalars().all()
+            if stuck:
+                for p in stuck:
+                    p.status = "error"
+                await db.commit()
+                logger.warning("Recovered %d stuck project(s) from 'processing' to 'error'", len(stuck))
+    except Exception as e:
+        logger.error("Failed to recover stuck projects: %s", e)
 
 
 @asynccontextmanager
@@ -29,6 +49,9 @@ async def lifespan(app: FastAPI):
     # Inicializar banco de dados
     await init_db()
     logger.info("Database initialized")
+
+    # Recuperar projetos presos em processamento
+    await recover_stuck_projects()
 
     yield
 

@@ -6,7 +6,6 @@ import {
   createProject,
   uploadMultipleImages,
   loadAuthToken,
-  analyzeProject,
   ApiError,
 } from '@/lib/api'
 
@@ -210,14 +209,6 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
               : f
           ))
         }
-      }
-
-      // 3. Disparar análise automática
-      try {
-        await analyzeProject(project.id)
-      } catch (analysisError) {
-        // Continuar mesmo se a análise falhar - pode ser executada depois
-        console.warn('Análise automática não iniciada:', analysisError)
       }
 
       // Marcar sucesso
@@ -503,7 +494,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
               </>
             ) : (
               <>
-                <span>Enviar e Processar</span>
+                <span>Enviar Imagens</span>
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
@@ -524,7 +515,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
             {files.length} arquivo(s) enviado(s).
             {uploadSuccess && isAuthenticated ? (
               <span className="block mt-1">
-                A análise está sendo processada. Você será redirecionado para seus projetos...
+                Voce sera direcionado para delimitar o perimetro de analise.
               </span>
             ) : (
               <span className="block mt-1">

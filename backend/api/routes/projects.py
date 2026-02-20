@@ -854,16 +854,19 @@ async def analyze_project(
             detail="Projeto não possui imagens para analisar"
         )
 
-    # Limpar análises com erro para permitir re-análise
+    # Limpar análises com erro ou stuck em processing para permitir re-análise
     for image in images:
-        error_analyses = await db.execute(
+        stale_analyses = await db.execute(
             select(Analysis).where(
                 Analysis.image_id == image.id,
-                Analysis.status == "error"
+                Analysis.status.in_(["error", "processing"])
             )
         )
-        for err_analysis in error_analyses.scalars().all():
-            await db.delete(err_analysis)
+        for stale_analysis in stale_analyses.scalars().all():
+            await db.delete(stale_analysis)
+        # Reset image status if it was stuck
+        if image.status == "processing" or image.status == "error":
+            image.status = "uploaded"
     await db.commit()
 
     # Separar imagens e vídeos que precisam de análise

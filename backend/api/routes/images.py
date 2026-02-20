@@ -678,6 +678,70 @@ async def get_image_gsd(
     }
 
 
+@router.get("/{image_id}/utm-info")
+async def get_image_utm_info(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Obter informações UTM (coordenadas projetadas) da imagem.
+
+    Retorna zona UTM, coordenadas do centro e dos 4 cantos.
+    Se a imagem não tem GPS, retorna has_gps: false.
+    """
+    from backend.services.geo import latlon_to_utm, get_image_utm_corners
+    from backend.api.routes.projects import get_image_gsd_from_xmp
+
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada",
+        )
+
+    if not image.center_lat or not image.center_lon:
+        return {"has_gps": False, "image_id": image_id}
+
+    # GSD
+    gsd_m = None
+    if image.file_path:
+        gsd_m = get_image_gsd_from_xmp(image.file_path)
+    if not gsd_m:
+        gsd_m = 0.03  # fallback
+
+    # Converter centro para UTM
+    center_utm = latlon_to_utm(image.center_lat, image.center_lon)
+
+    # Calcular cantos se tiver dimensões
+    corners = None
+    if image.width and image.height:
+        corners_data = get_image_utm_corners(
+            image.center_lat, image.center_lon,
+            image.width, image.height, gsd_m,
+        )
+        corners = corners_data
+
+    return {
+        "has_gps": True,
+        "image_id": image_id,
+        "utm_zone": center_utm["zone"],
+        "center": {
+            "easting": center_utm["easting"],
+            "northing": center_utm["northing"],
+        },
+        "corners": corners,
+        "gsd_m": gsd_m,
+        "gsd_cm": gsd_m * 100,
+    }
+
+
 @router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
     image_id: int,

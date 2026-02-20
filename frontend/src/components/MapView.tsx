@@ -13,7 +13,13 @@ import {
   createAnnotation as apiCreateAnnotation,
   deleteAnnotationApi,
   updateAnnotation as apiUpdateAnnotation,
+  analyzeROI,
+  analyzeProject,
+  getImageUTMInfo,
+  getOverlayUrl,
   type Project as ApiProject,
+  type UTMInfo,
+  type Analysis,
 } from '@/lib/api'
 import {
   Layers,
@@ -44,14 +50,23 @@ import {
   Save,
   Palette,
   Globe,
+  Target,
+  Bug,
+  Droplets,
+  Play,
 } from 'lucide-react'
+import CompassRose from '@/components/map/CompassRose'
+import ScaleBar from '@/components/map/ScaleBar'
+import CoordinateGrid from '@/components/map/CoordinateGrid'
+import LegendPanel from '@/components/map/LegendPanel'
+import ViewModeCarousel from '@/components/map/ViewModeCarousel'
 
 type MapMode = 'project'
 
 interface Layer {
   id: string
   name: string
-  type: 'original' | 'vegetation' | 'health' | 'classification' | 'detection' | 'heatmap'
+  type: 'original' | 'vegetation' | 'health' | 'classification' | 'detection' | 'heatmap' | 'roi' | 'trees' | 'pests' | 'water'
   visible: boolean
   opacity: number
   color: string
@@ -118,7 +133,7 @@ interface ImageAnalysis {
   }
 }
 
-type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser'
+type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser' | 'roi'
 
 interface Annotation {
   id?: number
@@ -155,6 +170,12 @@ export default function MapView({ projectId }: MapViewProps) {
   const [zoom, setZoom] = useState(100)
   const [showLayers, setShowLayers] = useState(true)
 
+  // Pan/drag states
+  const [isPanning, setIsPanning] = useState(false)
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+  const [lastPanPoint, setLastPanPoint] = useState({ x: 0, y: 0 })
+  const imageContainerRef = useRef<HTMLDivElement>(null)
+
   // Project mode states
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
@@ -165,12 +186,33 @@ export default function MapView({ projectId }: MapViewProps) {
   const [error, setError] = useState<string | null>(null)
 
   const [layers, setLayers] = useState<Layer[]>([
-    { id: '1', name: 'Imagem Original', type: 'original', visible: true, opacity: 100, color: '#ffffff' },
-    { id: '2', name: 'Cobertura Vegetal', type: 'vegetation', visible: false, opacity: 80, color: '#6AAF3D' },
-    { id: '3', name: 'Saúde da Vegetação', type: 'health', visible: false, opacity: 70, color: '#F59E0B' },
-    { id: '4', name: 'Mapa de Calor', type: 'heatmap', visible: false, opacity: 60, color: '#EF4444' },
+    { id: 'original', name: 'Imagem Original', type: 'original', visible: true, opacity: 100, color: '#ffffff' },
+    { id: 'perimeter', name: 'Perimetro (ROI)', type: 'roi', visible: true, opacity: 90, color: '#3B82F6' },
+    { id: 'vegetation', name: 'Cobertura Vegetal', type: 'vegetation', visible: false, opacity: 80, color: '#6AAF3D' },
+    { id: 'health', name: 'Saude', type: 'health', visible: false, opacity: 70, color: '#F59E0B' },
+    { id: 'trees', name: 'Arvores Detectadas', type: 'trees', visible: false, opacity: 85, color: '#22C55E' },
+    { id: 'pests', name: 'Areas com Pragas', type: 'pests', visible: false, opacity: 75, color: '#EF4444' },
+    { id: 'water', name: "Corpos d'Agua", type: 'water', visible: false, opacity: 70, color: '#3B82F6' },
+    { id: 'heatmap', name: 'Mapa de Calor', type: 'heatmap', visible: false, opacity: 60, color: '#EF4444' },
   ])
 
+  // ROI states
+  const [roiPolygon, setRoiPolygon] = useState<number[][] | null>(null)
+  const [roiResults, setRoiResults] = useState<Record<string, unknown> | null>(null)
+  const [roiAnalyzing, setRoiAnalyzing] = useState(false)
+  const [roiAnalyses, setRoiAnalyses] = useState<string[]>(['vegetation', 'health', 'plant_count'])
+
+  // Project analysis
+  const [analyzingProject, setAnalyzingProject] = useState(false)
+
+  // UTM info
+  const [utmInfo, setUtmInfo] = useState<UTMInfo | null>(null)
+
+  // View mode carousel
+  const [activeViewMode, setActiveViewMode] = useState('original')
+
+  // Full report data for SVG overlays (trees, pests)
+  const [fullReportData, setFullReportData] = useState<Record<string, unknown> | null>(null)
 
   // Drawing tools states
   const [activeTool, setActiveTool] = useState<DrawingTool>('select')
@@ -209,6 +251,7 @@ export default function MapView({ projectId }: MapViewProps) {
     'polygon': 'Clique para adicionar vertices. Duplo-clique para fechar. ESC para cancelar',
     'measurement': 'Clique no ponto inicial, depois no ponto final para medir',
     'eraser': 'Clique em uma anotacao para remove-la',
+    'roi': 'Desenhe o perimetro da area de interesse. Duplo-clique para fechar. ESC para cancelar',
   }
 
   // Colors for annotations
@@ -413,6 +456,66 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }
 
+  // Handle ROI analysis
+  const handleAnalyzeROI = async () => {
+    if (!roiPolygon || roiPolygon.length < 3 || !projectImages[selectedImageIndex]) return
+    setRoiAnalyzing(true)
+    try {
+      const result = await analyzeROI(
+        projectImages[selectedImageIndex].id,
+        roiPolygon,
+        roiAnalyses,
+      )
+      setRoiResults(result.results || null)
+    } catch (err) {
+      console.error('Erro na analise ROI:', err)
+      setRoiResults(null)
+    } finally {
+      setRoiAnalyzing(false)
+    }
+  }
+
+  // Clear ROI
+  const clearROI = () => {
+    setRoiPolygon(null)
+    setRoiResults(null)
+    setCurrentAnnotation(null)
+  }
+
+  // Analyze full project
+  const handleAnalyzeProject = async () => {
+    const pid = selectedProject?.id || projectId
+    if (!pid) return
+    setAnalyzingProject(true)
+    try {
+      await analyzeProject(pid)
+    } catch (err) {
+      console.error('Erro ao iniciar analise:', err)
+    } finally {
+      setAnalyzingProject(false)
+    }
+  }
+
+  // Fetch UTM info
+  const fetchUTMInfo = async (imageId: number) => {
+    try {
+      const data = await getImageUTMInfo(imageId)
+      setUtmInfo(data)
+    } catch (err) {
+      console.error('Erro ao carregar UTM:', err)
+      setUtmInfo(null)
+    }
+  }
+
+  // View mode change handler
+  const handleViewModeChange = (modeId: string, activeLayers: string[]) => {
+    setActiveViewMode(modeId)
+    setLayers(prev => prev.map(layer => ({
+      ...layer,
+      visible: activeLayers.includes(layer.id),
+    })))
+  }
+
   // Handle canvas click for drawing
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'select' || activeTool === 'eraser') return
@@ -420,6 +523,23 @@ export default function MapView({ projectId }: MapViewProps) {
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+
+    if (activeTool === 'roi') {
+      if (!currentAnnotation) {
+        setCurrentAnnotation({
+          type: 'roi',
+          data: { points: [[x, y]], color: '#3B82F6' },
+          isNew: true,
+        })
+      } else if (currentAnnotation.type === 'roi' && currentAnnotation.data.points) {
+        const points = [...currentAnnotation.data.points, [x, y]]
+        setCurrentAnnotation({
+          ...currentAnnotation,
+          data: { ...currentAnnotation.data, points },
+        })
+      }
+      return
+    }
 
     if (activeTool === 'point') {
       const newAnnotation: Annotation = {
@@ -472,8 +592,29 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }
 
-  // Handle double click to finish polygon
+  // Handle double click to finish polygon or ROI
   const handleCanvasDoubleClick = () => {
+    // Finish ROI polygon
+    if (activeTool === 'roi' && currentAnnotation && currentAnnotation.type === 'roi' && currentAnnotation.data.points && currentAnnotation.data.points.length >= 3) {
+      setRoiPolygon(currentAnnotation.data.points)
+      setCurrentAnnotation(null)
+      setActiveTool('select')
+      // Save ROI as special annotation
+      const areaM2 = calculatePolygonArea(currentAnnotation.data.points)
+      const roiAnnotation: Annotation = {
+        type: 'polygon',
+        data: {
+          points: currentAnnotation.data.points,
+          color: '#3B82F6',
+          label: imageGSD ? `ROI - ${formatArea(areaM2)}` : 'ROI - Perimetro',
+          areaM2,
+        },
+        isNew: true,
+      }
+      saveAnnotation(roiAnnotation)
+      return
+    }
+
     if (activeTool === 'polygon' && currentAnnotation && currentAnnotation.data.points && currentAnnotation.data.points.length >= 3) {
       const points = currentAnnotation.data.points
       const areaM2 = calculatePolygonArea(points)
@@ -684,15 +825,27 @@ export default function MapView({ projectId }: MapViewProps) {
   // Load image when selected
   useEffect(() => {
     if (projectImages.length > 0 && selectedImageIndex >= 0) {
+      const imgId = projectImages[selectedImageIndex].id
       loadImage(projectImages[selectedImageIndex])
-      fetchImageAnalysis(projectImages[selectedImageIndex].id)
-      fetchAnnotations(projectImages[selectedImageIndex].id)
-      fetchImageGSD(projectImages[selectedImageIndex].id)
+      fetchImageAnalysis(imgId)
+      fetchAnnotations(imgId)
+      fetchImageGSD(imgId)
+      fetchUTMInfo(imgId)
+      // Fetch full report data for SVG overlays
+      apiGetAnalyses(imgId, undefined, undefined, 0, 100).then(data => {
+        const full = data.analyses?.find((a: Analysis) => a.analysis_type === 'full_report' && a.status === 'completed')
+        setFullReportData(full?.results as Record<string, unknown> || null)
+      }).catch(() => setFullReportData(null))
+      // Reset ROI on image change
+      setRoiPolygon(null)
+      setRoiResults(null)
     } else {
       setCurrentImageUrl(null)
       setImageAnalysis(null)
       setAnnotations([])
       setImageGSD(null)
+      setUtmInfo(null)
+      setFullReportData(null)
     }
     // Cleanup on unmount
     return () => {
@@ -701,6 +854,46 @@ export default function MapView({ projectId }: MapViewProps) {
       }
     }
   }, [projectImages, selectedImageIndex, loadImage])
+
+  // Mousewheel zoom
+  const handleWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -10 : 10
+    setZoom(prev => Math.min(300, Math.max(25, prev + delta)))
+  }, [])
+
+  // Attach wheel event to image container
+  useEffect(() => {
+    const container = imageContainerRef.current
+    if (!container) return
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => container.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
+
+  // Pan handlers
+  const handlePanStart = useCallback((e: React.MouseEvent) => {
+    if (activeTool !== 'select') return
+    setIsPanning(true)
+    setLastPanPoint({ x: e.clientX, y: e.clientY })
+  }, [activeTool])
+
+  const handlePanMove = useCallback((e: React.MouseEvent) => {
+    if (!isPanning) return
+    const dx = e.clientX - lastPanPoint.x
+    const dy = e.clientY - lastPanPoint.y
+    setPanOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+    setLastPanPoint({ x: e.clientX, y: e.clientY })
+  }, [isPanning, lastPanPoint])
+
+  const handlePanEnd = useCallback(() => {
+    setIsPanning(false)
+  }, [])
+
+  // Reset zoom and pan
+  const resetView = useCallback(() => {
+    setZoom(100)
+    setPanOffset({ x: 0, y: 0 })
+  }, [])
 
   return (
     <div ref={mapContainerRef} className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden h-full flex flex-col">
@@ -818,8 +1011,13 @@ export default function MapView({ projectId }: MapViewProps) {
             <>
               {/* Área do mapa/imagem */}
               <div className="flex-1 relative bg-gray-900">
+                {/* View Mode Carousel no topo */}
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30">
+                  <ViewModeCarousel activeMode={activeViewMode} onModeChange={handleViewModeChange} />
+                </div>
+
                 {/* Toolbar do mapa */}
-                <div className="absolute top-4 left-4 right-4 z-10 flex items-center justify-between">
+                <div className="absolute top-14 left-4 right-4 z-20 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setSelectedProject(null)}
@@ -847,14 +1045,21 @@ export default function MapView({ projectId }: MapViewProps) {
                       <button
                         onClick={() => setActiveTool('polygon')}
                         className={`p-2 rounded-lg transition-colors ${activeTool === 'polygon' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Desenhar polígono - duplo-clique para fechar, ESC para cancelar"
+                        title="Desenhar poligono"
                       >
                         <PenTool size={18} />
                       </button>
                       <button
+                        onClick={() => setActiveTool('roi')}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'roi' ? 'bg-blue-500 text-white' : 'text-blue-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Desenhar ROI (Region of Interest) - analise dentro do perimetro"
+                      >
+                        <Target size={18} />
+                      </button>
+                      <button
                         onClick={() => setActiveTool('measurement')}
                         className={`p-2 rounded-lg transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Medir distância em metros - clique início e fim, ESC para cancelar"
+                        title="Medir distancia"
                       >
                         <Ruler size={18} />
                       </button>
@@ -918,10 +1123,162 @@ export default function MapView({ projectId }: MapViewProps) {
 
                 {/* Barra de instrucao da ferramenta ativa */}
                 {activeTool !== 'select' && toolInstructions[activeTool] && (
-                  <div className="absolute top-[72px] left-4 right-4 z-10 flex justify-center">
-                    <div className="px-4 py-2 bg-blue-600/90 text-white text-sm rounded-lg shadow-lg flex items-center gap-2">
+                  <div className="absolute top-[110px] left-1/2 -translate-x-1/2 z-10 flex justify-center">
+                    <div className={`px-4 py-2 ${activeTool === 'roi' ? 'bg-blue-600/90' : 'bg-blue-600/90'} text-white text-sm rounded-lg shadow-lg flex items-center gap-2`}>
                       <Info size={16} />
                       {toolInstructions[activeTool]}
+                    </div>
+                  </div>
+                )}
+
+                {/* ROI: Botao flutuante para analisar area + painel de resultados */}
+                {roiPolygon && roiPolygon.length >= 3 && (
+                  <div className="absolute top-[110px] left-4 z-20 w-64">
+                    {!roiResults ? (
+                      <div className="bg-gray-800/95 rounded-xl border border-blue-500/50 p-4 shadow-xl">
+                        <h4 className="text-blue-400 font-medium text-sm mb-3 flex items-center gap-2">
+                          <Target size={16} /> Analisar Area ROI
+                        </h4>
+                        <div className="space-y-2 mb-3">
+                          {['vegetation', 'health', 'plant_count', 'pest_disease', 'biomass'].map(a => (
+                            <label key={a} className="flex items-center gap-2 text-xs text-gray-300">
+                              <input
+                                type="checkbox"
+                                checked={roiAnalyses.includes(a)}
+                                onChange={(e) => {
+                                  if (e.target.checked) setRoiAnalyses(prev => [...prev, a])
+                                  else setRoiAnalyses(prev => prev.filter(x => x !== a))
+                                }}
+                                className="rounded"
+                              />
+                              {a === 'vegetation' ? 'Vegetacao' : a === 'health' ? 'Saude' : a === 'plant_count' ? 'Contagem' : a === 'pest_disease' ? 'Pragas' : 'Biomassa'}
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleAnalyzeROI}
+                            disabled={roiAnalyzing}
+                            className="flex-1 px-3 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm rounded-lg transition-colors flex items-center justify-center gap-2"
+                          >
+                            {roiAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Target size={14} />}
+                            {roiAnalyzing ? 'Analisando...' : 'Analisar'}
+                          </button>
+                          <button
+                            onClick={clearROI}
+                            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
+                          >
+                            Limpar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-gray-800/95 rounded-xl border border-blue-500/50 p-4 shadow-xl max-h-[50vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-blue-400 font-medium text-sm flex items-center gap-2">
+                            <Target size={16} /> Resultados ROI
+                          </h4>
+                          <button onClick={clearROI} className="p-1 hover:bg-gray-700 rounded">
+                            <X size={14} className="text-gray-400" />
+                          </button>
+                        </div>
+
+                        {/* ROI metadata */}
+                        {(roiResults as any)?.roi_metadata && (
+                          <div className="p-2 bg-blue-500/10 rounded-lg mb-2">
+                            <p className="text-xs text-blue-300">
+                              Area: {((roiResults as any).roi_metadata.area_pixels * (imageGSD?.gsd_m || 0.03) * (imageGSD?.gsd_m || 0.03)).toFixed(1)} m²
+                              {' '}| Cobertura: {(roiResults as any).roi_metadata.coverage_pct}%
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Vegetation */}
+                        {(roiResults as any)?.vegetation && !(roiResults as any).vegetation.error && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-700/30 rounded-lg mb-1">
+                            <Leaf className="text-[#6AAF3D]" size={14} />
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">Vegetacao</p>
+                              <p className="text-white text-sm font-medium">
+                                {((roiResults as any).vegetation.vegetation_percentage ?? 0).toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Health */}
+                        {(roiResults as any)?.health && !(roiResults as any).health.error && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-700/30 rounded-lg mb-1">
+                            <CheckCircle className="text-yellow-400" size={14} />
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">Saude</p>
+                              <p className="text-white text-sm font-medium">
+                                {((roiResults as any).health.health_index ?? 0).toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Plant count */}
+                        {(roiResults as any)?.plant_count && !(roiResults as any).plant_count.error && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-700/30 rounded-lg mb-1">
+                            <Trees className="text-green-400" size={14} />
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">Arvores no ROI</p>
+                              <p className="text-white text-sm font-medium">
+                                {(roiResults as any).plant_count.total_count}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Pest */}
+                        {(roiResults as any)?.pest_disease && !(roiResults as any).pest_disease.error && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-700/30 rounded-lg mb-1">
+                            <Bug className="text-red-400" size={14} />
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">Pragas</p>
+                              <p className="text-white text-sm font-medium">
+                                Infeccao: {((roiResults as any).pest_disease.infection_rate ?? 0).toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Biomass */}
+                        {(roiResults as any)?.biomass && !(roiResults as any).biomass.error && (
+                          <div className="flex items-center gap-2 p-2 bg-gray-700/30 rounded-lg mb-1">
+                            <Leaf className="text-emerald-400" size={14} />
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">Biomassa</p>
+                              <p className="text-white text-sm font-medium">
+                                Indice: {((roiResults as any).biomass.biomass_index ?? 0).toFixed(1)}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Botao flutuante "Analisar Projeto" — aparece após ROI ou se projeto sem analise */}
+                {(roiPolygon || (analysisSummary && analysisSummary.analyzed_images === 0)) && !analyzingProject && (
+                  <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-20">
+                    <button
+                      onClick={handleAnalyzeProject}
+                      className="px-6 py-3 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white font-semibold rounded-xl shadow-lg shadow-[#6AAF3D]/30 transition-all flex items-center gap-2 text-sm"
+                    >
+                      <Play size={18} />
+                      Analisar Projeto Completo
+                    </button>
+                  </div>
+                )}
+                {analyzingProject && (
+                  <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-20">
+                    <div className="px-6 py-3 bg-yellow-500/90 text-white font-semibold rounded-xl shadow-lg flex items-center gap-2 text-sm">
+                      <Loader2 size={18} className="animate-spin" />
+                      Analise iniciada...
                     </div>
                   </div>
                 )}
@@ -929,18 +1286,21 @@ export default function MapView({ projectId }: MapViewProps) {
                 {/* Exibir imagem do projeto */}
                 {projectImages.length > 0 ? (
                   <div
-                    className="absolute inset-0 overflow-auto"
+                    ref={imageContainerRef}
+                    className="absolute inset-0 overflow-hidden"
                     onClick={handleCanvasClick}
                     onDoubleClick={handleCanvasDoubleClick}
-                    style={{ cursor: activeTool === 'select' ? 'default' : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
+                    onMouseDown={handlePanStart}
+                    onMouseMove={handlePanMove}
+                    onMouseUp={handlePanEnd}
+                    onMouseLeave={handlePanEnd}
+                    style={{ cursor: activeTool === 'select' ? (isPanning ? 'grabbing' : 'grab') : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
                   >
                     <div
                       className="relative min-w-full min-h-full"
                       style={{
-                        transform: `scale(${zoom / 100})`,
+                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom / 100})`,
                         transformOrigin: 'center center',
-                        width: zoom > 100 ? `${zoom}%` : '100%',
-                        height: zoom > 100 ? `${zoom}%` : '100%',
                       }}
                     >
                     {imageLoading ? (
@@ -968,16 +1328,144 @@ export default function MapView({ projectId }: MapViewProps) {
                         </div>
                       </div>
                     )}
-                    {/* Overlay com gradiente se necessário */}
-                    {layers.find(l => l.type === 'vegetation')?.visible && (
-                      <div className="absolute inset-0 bg-gradient-to-br from-green-500/30 via-yellow-500/20 to-red-500/20 mix-blend-overlay pointer-events-none" />
-                    )}
-                    {layers.find(l => l.type === 'heatmap')?.visible && (
-                      <div className="absolute inset-0 bg-gradient-to-br from-red-500/40 via-yellow-500/30 to-green-500/20 mix-blend-overlay pointer-events-none" />
+                    {/* Overlay de camadas baseado em dados reais */}
+                    {layers.find(l => l.type === 'vegetation')?.visible && (() => {
+                      const vegLayer = layers.find(l => l.type === 'vegetation')!
+                      const vegPct = imageAnalysis?.vegetation_coverage?.vegetation_percentage
+                      // Intensidade baseada na % de vegetação real (ou gradiente padrão se sem dados)
+                      const intensity = vegPct != null ? Math.min(vegPct / 100, 1) * 0.5 : 0.3
+                      return (
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{
+                            background: vegPct != null
+                              ? `radial-gradient(ellipse at center, rgba(106,175,61,${intensity}) 0%, rgba(106,175,61,${intensity * 0.3}) 70%, transparent 100%)`
+                              : 'linear-gradient(135deg, rgba(106,175,61,0.3) 0%, rgba(245,158,11,0.2) 50%, rgba(239,68,68,0.15) 100%)',
+                            mixBlendMode: 'overlay',
+                            opacity: vegLayer.opacity / 100,
+                          }}
+                        />
+                      )
+                    })()}
+                    {layers.find(l => l.type === 'health')?.visible && (() => {
+                      const healthLayer = layers.find(l => l.type === 'health')!
+                      const healthIdx = imageAnalysis?.vegetation_health?.health_index
+                      // Cor baseada no health_index: verde >= 70, amarelo 50-70, vermelho < 50
+                      const healthColor = healthIdx != null
+                        ? healthIdx >= 70 ? 'rgba(34,197,94,0.35)' : healthIdx >= 50 ? 'rgba(245,158,11,0.35)' : 'rgba(239,68,68,0.35)'
+                        : 'rgba(245,158,11,0.25)'
+                      return (
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{
+                            backgroundColor: healthColor,
+                            mixBlendMode: 'overlay',
+                            opacity: healthLayer.opacity / 100,
+                          }}
+                        />
+                      )
+                    })()}
+                    {layers.find(l => l.type === 'heatmap')?.visible && (() => {
+                      const heatLayer = layers.find(l => l.type === 'heatmap')!
+                      const vegPct = imageAnalysis?.vegetation_coverage?.vegetation_percentage ?? 50
+                      // Tom quente/frio baseado na cobertura vegetal (mais verde = mais frio)
+                      const hue = Math.round((vegPct / 100) * 120) // 0=vermelho, 120=verde
+                      return (
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{
+                            background: `radial-gradient(ellipse at 30% 30%, hsla(${hue},80%,50%,0.4) 0%, hsla(${Math.max(0, hue - 60)},80%,50%,0.3) 50%, hsla(0,80%,50%,0.2) 100%)`,
+                            mixBlendMode: 'overlay',
+                            opacity: heatLayer.opacity / 100,
+                          }}
+                        />
+                      )
+                    })()}
+                    {/* Camada water - overlay azul */}
+                    {layers.find(l => l.type === 'water')?.visible && (() => {
+                      const waterLayer = layers.find(l => l.type === 'water')!
+                      return (
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{
+                            background: 'radial-gradient(ellipse at 60% 70%, rgba(59,130,246,0.3) 0%, transparent 60%)',
+                            mixBlendMode: 'overlay',
+                            opacity: waterLayer.opacity / 100,
+                          }}
+                        />
+                      )
+                    })()}
+
+                    {/* UTM Coordinate Grid */}
+                    {utmInfo && utmInfo.has_gps && projectImages[selectedImageIndex]?.width && projectImages[selectedImageIndex]?.height && (
+                      <CoordinateGrid
+                        utmInfo={utmInfo}
+                        imageWidth={projectImages[selectedImageIndex].width!}
+                        imageHeight={projectImages[selectedImageIndex].height!}
+                      />
                     )}
 
-                    {/* Renderizar anotacoes */}
+                    {/* Renderizar anotacoes + overlays SVG */}
                     <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                      {/* SVG overlay: Árvores detectadas */}
+                      {layers.find(l => l.type === 'trees')?.visible && fullReportData && (() => {
+                        const treesLayer = layers.find(l => l.type === 'trees')!
+                        const plantCount = (fullReportData as any)?.plant_count || (fullReportData as any)?.tree_count
+                        const treeList = plantCount?.locations || plantCount?.trees || []
+                        return treeList.map((tree: any, i: number) => {
+                          const center = tree.center
+                          if (!center) return null
+                          const radius = Math.max(4, Math.sqrt((tree.area || 200)) / 3)
+                          return (
+                            <circle
+                              key={`tree-${i}`}
+                              cx={center[0]}
+                              cy={center[1]}
+                              r={radius}
+                              fill="rgba(34,197,94,0.5)"
+                              stroke="#22C55E"
+                              strokeWidth={1.5}
+                              opacity={treesLayer.opacity / 100}
+                            />
+                          )
+                        })
+                      })()}
+
+                      {/* SVG overlay: Pragas */}
+                      {layers.find(l => l.type === 'pests')?.visible && fullReportData && (() => {
+                        const pestsLayer = layers.find(l => l.type === 'pests')!
+                        const pestData = (fullReportData as any)?.pest_disease
+                        const regions = pestData?.affected_regions || []
+                        return regions.map((region: any, i: number) => {
+                          const bbox = region.bbox
+                          if (!bbox || bbox.length < 4) return null
+                          return (
+                            <rect
+                              key={`pest-${i}`}
+                              x={bbox[0]}
+                              y={bbox[1]}
+                              width={bbox[2] - bbox[0]}
+                              height={bbox[3] - bbox[1]}
+                              fill="rgba(239,68,68,0.3)"
+                              stroke="#EF4444"
+                              strokeWidth={1.5}
+                              strokeDasharray="4,2"
+                              opacity={pestsLayer.opacity / 100}
+                            />
+                          )
+                        })
+                      })()}
+
+                      {/* ROI polygon visual */}
+                      {roiPolygon && roiPolygon.length >= 3 && layers.find(l => l.type === 'roi')?.visible && (
+                        <polygon
+                          points={roiPolygon.map(p => p.join(',')).join(' ')}
+                          fill="rgba(59,130,246,0.15)"
+                          stroke="#3B82F6"
+                          strokeWidth={2.5}
+                          strokeDasharray="8,4"
+                        />
+                      )}
                       {annotations.map((ann, idx) => {
                         if (ann.type === 'point' && ann.data.x && ann.data.y) {
                           return (
@@ -1104,6 +1592,16 @@ export default function MapView({ projectId }: MapViewProps) {
                           strokeDasharray="5,5"
                         />
                       )}
+                      {/* ROI em progresso */}
+                      {currentAnnotation?.type === 'roi' && currentAnnotation.data.points && currentAnnotation.data.points.length > 0 && (
+                        <polyline
+                          points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
+                          fill="none"
+                          stroke="#3B82F6"
+                          strokeWidth={2.5}
+                          strokeDasharray="8,4"
+                        />
+                      )}
                     </svg>
                     </div>{/* end zoomable wrapper */}
                   </div>
@@ -1120,7 +1618,7 @@ export default function MapView({ projectId }: MapViewProps) {
 
                 {/* Navegação entre imagens */}
                 {projectImages.length > 1 && (
-                  <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-gray-800/90 rounded-lg">
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-gray-800/90 rounded-lg z-10">
                     <button
                       onClick={() => setSelectedImageIndex(Math.max(0, selectedImageIndex - 1))}
                       disabled={selectedImageIndex === 0}
@@ -1142,43 +1640,67 @@ export default function MapView({ projectId }: MapViewProps) {
                 )}
 
                 {/* Controles de zoom */}
-                <div className="absolute right-4 bottom-20 flex flex-col gap-2">
+                <div className="absolute right-20 bottom-4 flex items-center gap-1 z-10">
                   <button
-                    onClick={() => setZoom(prev => Math.min(prev + 10, 200))}
+                    onClick={() => setZoom(prev => Math.min(prev + 10, 300))}
                     className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                    title="Zoom in"
                   >
                     <ZoomIn size={18} />
                   </button>
-                  <div className="px-2 py-1 bg-gray-800/90 text-white text-xs text-center rounded-lg">
+                  <div className="px-2 py-1 bg-gray-800/90 text-white text-xs text-center rounded-lg min-w-[42px]">
                     {zoom}%
                   </div>
                   <button
-                    onClick={() => setZoom(prev => Math.max(prev - 10, 10))}
+                    onClick={() => setZoom(prev => Math.max(prev - 10, 25))}
                     className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                    title="Zoom out"
                   >
                     <ZoomOut size={18} />
                   </button>
+                  <button
+                    onClick={resetView}
+                    className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors ml-1"
+                    title="Resetar zoom e posicao"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                </div>
+
+                {/* Compass Rose */}
+                <div className="absolute top-3 right-3 z-20">
+                  <CompassRose size={48} />
                 </div>
 
                 {/* Info do projeto */}
-                <div className="absolute left-4 bottom-4 px-4 py-3 bg-gray-800/90 rounded-lg">
+                <div className="absolute left-4 bottom-14 px-4 py-3 bg-gray-800/90 rounded-lg z-10">
                   <p className="text-white font-medium text-sm">{selectedProject.name}</p>
                   <p className="text-gray-400 text-xs">
                     {selectedProject.image_count} imagem(ns) • {formatDate(selectedProject.created_at)}
                   </p>
+                  {utmInfo?.has_gps && utmInfo.utm_zone && (
+                    <p className="text-blue-300 text-xs mt-1 font-mono">
+                      UTM {utmInfo.utm_zone} | E{utmInfo.center?.easting?.toFixed(0)} N{utmInfo.center?.northing?.toFixed(0)}
+                    </p>
+                  )}
                 </div>
 
-                {/* Escala dinâmica baseada no GSD */}
-                <div className="absolute right-4 bottom-4 flex items-center gap-2 px-3 py-2 bg-gray-800/90 rounded-lg">
-                  <div className="h-1 w-16 bg-white rounded"></div>
-                  <span className="text-xs text-gray-300">
-                    {imageGSD ? formatDistance(64 * imageGSD.gsd_m) : '~2m'}
-                  </span>
+                {/* ScaleBar + LegendPanel bottom */}
+                <div className="absolute right-4 bottom-14 flex items-end gap-2 z-10">
+                  <LegendPanel items={layers.map(l => ({
+                    id: l.id,
+                    name: l.name,
+                    color: l.color,
+                    visible: l.visible,
+                  }))} />
+                  {imageGSD && (
+                    <ScaleBar gsdM={imageGSD.gsd_m} zoom={zoom} />
+                  )}
                 </div>
 
                 {/* Painel de informacoes da imagem */}
-                {showInfoPanel && projectImages[selectedImageIndex] && (
-                  <div className="absolute top-20 right-4 w-72 bg-gray-800/95 rounded-xl border border-gray-700/50 overflow-hidden shadow-xl">
+                {showInfoPanel && !roiPolygon && projectImages[selectedImageIndex] && (
+                  <div className="absolute top-14 right-16 w-72 bg-gray-800/95 rounded-xl border border-gray-700/50 overflow-hidden shadow-xl z-20">
                     <div className="flex items-center justify-between p-3 bg-gray-700/50 border-b border-gray-700/50">
                       <h4 className="text-white font-medium text-sm">Informacoes da Imagem</h4>
                       <button onClick={() => setShowInfoPanel(false)} className="p-1 hover:bg-gray-600 rounded">

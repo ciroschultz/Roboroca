@@ -13,12 +13,14 @@ import {
   ChevronDown,
   Leaf,
   Thermometer,
-  Droplets,
   Mountain,
   Trees,
-  Scan,
   Activity,
-  LogOut
+  LogOut,
+  Bug,
+  TreePine,
+  Palette,
+  GitCompare,
 } from 'lucide-react'
 
 interface MenuItem {
@@ -70,21 +72,20 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
     },
     {
       id: 'analises',
-      label: 'Análises',
+      label: 'Comparação de Análises',
       icon: <BarChart3 size={20} />,
       submenu: [
+        { id: 'comparacao', label: 'Comparar Projetos', icon: <GitCompare size={18} /> },
         { id: 'cobertura', label: 'Cobertura Vegetal', icon: <Leaf size={18} /> },
         { id: 'saude-indice', label: 'Índice de Saúde', icon: <Activity size={18} /> },
         { id: 'uso-solo', label: 'Uso do Solo', icon: <Mountain size={18} /> },
         { id: 'contagem', label: 'Contagem de Plantas', icon: <Trees size={18} /> },
         { id: 'saude', label: 'Saúde das Plantas', icon: <Thermometer size={18} /> },
-        { id: 'altura', label: 'Estimativa de Altura', icon: <Scan size={18} /> },
+        { id: 'pragas', label: 'Pragas e Doenças', icon: <Bug size={18} /> },
+        { id: 'biomassa', label: 'Biomassa', icon: <TreePine size={18} /> },
+        { id: 'ndvi', label: 'NDVI / ExG', icon: <Activity size={18} /> },
+        { id: 'cores', label: 'Análise de Cores', icon: <Palette size={18} /> },
       ],
-    },
-    {
-      id: 'comparacao',
-      label: 'Comparação',
-      icon: <BarChart3 size={20} />,
     },
     {
       id: 'relatorios',
