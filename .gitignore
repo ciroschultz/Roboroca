@@ -177,3 +177,14 @@ celerybeat.pid
 htmlcov/
 .coverage
 .coverage.*
+
+# -----------------
+# Scripts de migracao de PC (dados pessoais)
+# -----------------
+copiar-dados.ps1
+copiar-roboroca.ps1
+preparar-pendrive.ps1
+verificar-pendrive.ps1
+setup-novo-pc.ps1
+conectar-git-novo-pc.ps1
+format-pendrive.txt
