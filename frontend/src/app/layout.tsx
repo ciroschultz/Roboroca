@@ -5,12 +5,18 @@ import Providers from '@/components/Providers'
 export const metadata: Metadata = {
   title: 'Roboroça - Automação Agrícola',
   description: 'Sistema Inteligente de Análise de Imagens Aéreas para Agricultura',
+  manifest: '/manifest.json',
   icons: {
     icon: '/favicon.png',
     apple: '/logo-icon.png',
   },
   keywords: ['agricultura', 'drone', 'satélite', 'análise de imagens', 'IA', 'agro', 'roboroça'],
   authors: [{ name: 'Roboroça' }],
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Roboroça',
+  },
 }
 
 export const viewport: Viewport = {

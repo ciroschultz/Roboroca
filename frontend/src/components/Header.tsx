@@ -17,7 +17,9 @@ import {
   Info,
   FileText,
   Clock,
-  Trash2
+  Trash2,
+  Wifi,
+  WifiOff
 } from 'lucide-react'
 import { useNotifications, type AppNotification } from './NotificationContext'
 
@@ -51,6 +53,19 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
   const [showNotifications, setShowNotifications] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [isOnline, setIsOnline] = useState(true)
+
+  useEffect(() => {
+    setIsOnline(navigator.onLine)
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
   const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, clearAll } = useNotifications()
 
   const userMenuRef = useRef<HTMLDivElement>(null)
@@ -146,6 +161,14 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
             />
           </div>
         </div>
+
+        {/* Indicador de status online/offline */}
+        {!isOnline && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+            <WifiOff size={14} className="text-yellow-400" />
+            <span className="text-xs text-yellow-400 font-medium hidden sm:inline">Offline</span>
+          </div>
+        )}
 
         {/* Botões de ação compactos */}
         <button
@@ -316,6 +339,14 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
 
         {/* Botões de ação */}
         <div className="flex items-center gap-1">
+          {/* Indicador offline */}
+          {!isOnline && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-yellow-500/10 border border-yellow-500/30 rounded-lg mr-1">
+              <WifiOff size={14} className="text-yellow-400" />
+              <span className="text-xs text-yellow-400 font-medium">Offline</span>
+            </div>
+          )}
+
           {/* Toggle tema */}
           <button
             onClick={onThemeToggle}
