@@ -1,0 +1,5 @@
+select volume E
+clean
+create partition primary
+format fs=ntfs label="MIGRACAO" quick
+assign letter=E
