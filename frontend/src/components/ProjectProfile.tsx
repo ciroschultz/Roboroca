@@ -65,6 +65,7 @@ import { useToast } from './Toast'
 import { useConfirmDialog } from './ConfirmDialog'
 import ImageAnalysisPanel from './ImageAnalysisPanel'
 import ProjectEditModal from './ProjectEditModal'
+import PerimeterEditor from './PerimeterEditor'
 
 interface ProjectData {
   id: string
@@ -108,6 +109,7 @@ interface ProjectProfileProps {
   analysisSection?: string
   allProjects?: { id: string; name: string }[]
   onProjectChange?: (projectId: string) => void
+  openPerimeterEditor?: boolean
 }
 
 // Mapa de submenu ID → section element ID
@@ -123,7 +125,7 @@ const sectionMap: Record<string, string> = {
   'cores': 'section-colors',
 }
 
-export default function ProjectProfile({ project, onBack, onRefresh, initialTab, analysisSection, allProjects, onProjectChange }: ProjectProfileProps) {
+export default function ProjectProfile({ project, onBack, onRefresh, initialTab, analysisSection, allProjects, onProjectChange, openPerimeterEditor }: ProjectProfileProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analysis' | 'report'>(initialTab || 'overview')
   const [analyses, setAnalyses] = useState<Analysis[]>([])
   const [enrichedData, setEnrichedData] = useState<EnrichedData | null>(null)
@@ -138,6 +140,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showProjectSwitcher, setShowProjectSwitcher] = useState(false)
+  const [showPerimeterEditor, setShowPerimeterEditor] = useState(openPerimeterEditor || false)
 
   // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
   useEffect(() => {
@@ -289,9 +292,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   }, [project.id, fetchTimeline])
 
   const handleStartAnalysis = () => {
-    // Redirecionar para aba mapa para delimitar perímetro antes de analisar
-    setActiveTab('map')
-    toast.info('Delimite o perimetro', 'Desenhe a area de interesse e clique em "Analisar Projeto Completo"')
+    setShowPerimeterEditor(true)
   }
 
   const handleRunAnalysis = async () => {
@@ -486,6 +487,20 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
     return String(val)
   }
 
+  if (showPerimeterEditor) {
+    return (
+      <PerimeterEditor
+        projectId={Number(project.id)}
+        onComplete={() => {
+          setShowPerimeterEditor(false)
+          onRefresh?.()
+          fetchAnalyses()
+        }}
+        onCancel={() => setShowPerimeterEditor(false)}
+      />
+    )
+  }
+
   return (
     <div className="min-h-screen">
       {/* Header do Projeto */}
@@ -628,123 +643,9 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
 
       {/* Conteudo */}
       <div className="p-6">
-        {project.status === 'pending' ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <div className="w-24 h-24 rounded-full bg-blue-900/20 flex items-center justify-center mb-6">
-              <BarChart3 size={48} className="text-blue-400" />
-            </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Analise pendente</h3>
-            <p className="text-gray-400 text-center max-w-md mb-6">
-              Delimite o perimetro de interesse no mapa e depois inicie a analise.
-            </p>
-            <button
-              onClick={handleStartAnalysis}
-              className="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-medium text-lg mb-8 flex items-center gap-2"
-            >
-              <MapPin size={20} />
-              Delimitar Perimetro e Analisar
-            </button>
-
-            {/* Dados ambientais mesmo em projetos pendentes */}
-            {enrichedData && (enrichedData.weather || enrichedData.soil || enrichedData.elevation || enrichedData.geocoding) ? (
-              <div className="w-full max-w-4xl">
-                <h4 className="text-white font-medium text-sm mb-3 text-center">Dados Ambientais do Local</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {enrichedData.weather && !enrichedData.weather.error && (
-                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Cloud size={18} className="text-blue-400" />
-                        <h4 className="text-white font-medium text-sm">Clima</h4>
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        {enrichedData.weather.current?.weather_description && (
-                          <p className="text-blue-300 font-medium mb-1">{enrichedData.weather.current.weather_description}</p>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Temperatura</span>
-                          <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.temperature_c)}°C</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Umidade</span>
-                          <span className="text-white">{formatWeatherValue(enrichedData.weather.current?.relative_humidity_pct)}%</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {enrichedData.soil && !enrichedData.soil.error && (
-                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Layers size={18} className="text-amber-400" />
-                        <h4 className="text-white font-medium text-sm">Solo</h4>
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        {enrichedData.soil.properties && ['phh2o', 'nitrogen', 'soc', 'clay']
-                          .filter(k => enrichedData.soil!.properties![k])
-                          .slice(0, 3)
-                          .map(key => {
-                            const val = enrichedData.soil!.properties![key]
-                            const firstDepth = val?.depths ? Object.values(val.depths)[0] : null
-                            return (
-                              <div key={key} className="flex justify-between">
-                                <span className="text-gray-500 truncate mr-2">{val?.label || key}</span>
-                                <span className="text-white">{firstDepth != null ? firstDepth : '-'} {val?.unit || ''}</span>
-                              </div>
-                            )
-                          })
-                        }
-                      </div>
-                    </div>
-                  )}
-                  {enrichedData.elevation && !enrichedData.elevation.error && (
-                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Mountain size={18} className="text-green-400" />
-                        <h4 className="text-white font-medium text-sm">Elevacao</h4>
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Altitude</span>
-                          <span className="text-white">{formatWeatherValue(enrichedData.elevation.elevation_m)} m</span>
-                        </div>
-                        {enrichedData.elevation.terrain_classification && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Terreno</span>
-                            <span className="text-white">{enrichedData.elevation.terrain_classification.description || enrichedData.elevation.terrain_classification.category}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {enrichedData.geocoding && !enrichedData.geocoding.error && (
-                    <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Globe size={18} className="text-purple-400" />
-                        <h4 className="text-white font-medium text-sm">Localizacao</h4>
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        {enrichedData.geocoding.address?.city && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Cidade</span>
-                            <span className="text-white truncate ml-2">{enrichedData.geocoding.address.city}</span>
-                          </div>
-                        )}
-                        {enrichedData.geocoding.address?.state && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Estado</span>
-                            <span className="text-white">{enrichedData.geocoding.address.state}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : loadingEnriched ? (
-              <div className="flex items-center gap-2 text-gray-500 text-sm">
-                <Loader2 size={14} className="animate-spin" />
-                Carregando dados ambientais...
-              </div>
-            ) : null}
+        {activeTab === 'map' ? (
+          <div className="h-[calc(100vh-250px)]">
+            <MapView projectId={Number(project.id)} />
           </div>
         ) : project.status === 'processing' || analysisProgress ? (
           <div className="flex flex-col items-center justify-center py-16">
@@ -2059,10 +1960,6 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                 )}
               </>
             )}
-          </div>
-        ) : activeTab === 'map' ? (
-          <div className="h-[calc(100vh-250px)]">
-            <MapView projectId={Number(project.id)} />
           </div>
         ) : activeTab === 'report' ? (
           /* ====== RELATORIO PROFISSIONAL ====== */

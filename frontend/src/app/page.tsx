@@ -97,6 +97,7 @@ export default function Home() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const toast = useToast()
   const [projectInitialTab, setProjectInitialTab] = useState<'overview' | 'map' | 'analysis' | 'report' | undefined>(undefined)
+  const [openPerimeter, setOpenPerimeter] = useState(false)
   const [analysisSection, setAnalysisSection] = useState<string | undefined>(undefined)
   const [dashboardStats, setDashboardStats] = useState<{
     total_projects: number
@@ -254,6 +255,14 @@ export default function Home() {
       )
 
       setProjects(apiProjects)
+
+      // Atualizar selectedProject com dados frescos (para que ProjectProfile veja results atualizados)
+      setSelectedProject(prev => {
+        if (!prev) return prev
+        const updated = apiProjects.find(p => p.id === prev.id)
+        return updated || prev
+      })
+
       return apiProjects
     } catch (error) {
       console.error('Erro ao carregar projetos:', error)
@@ -462,11 +471,12 @@ export default function Home() {
 
     setIsCreatingProject(false)
 
-    // Encontrar o projeto recém-criado e redirecionar para aba mapa
+    // Encontrar o projeto recém-criado e abrir o editor de perímetro
     const newProject = loadedProjects.find(p => p.id === String(projectId))
     if (newProject) {
       setSelectedProject(newProject)
-      setProjectInitialTab('map')
+      setProjectInitialTab('overview')
+      setOpenPerimeter(true)
       setActiveView('project-detail')
     } else {
       // Fallback: ir para projetos
@@ -483,10 +493,12 @@ export default function Home() {
           project={selectedProject as any}
           initialTab={projectInitialTab}
           analysisSection={analysisSection}
+          openPerimeterEditor={openPerimeter}
           onBack={() => {
             setSelectedProject(null)
             setProjectInitialTab(undefined)
             setAnalysisSection(undefined)
+            setOpenPerimeter(false)
             setActiveView('projects')
             setActiveItem('projetos')
           }}
@@ -498,6 +510,7 @@ export default function Home() {
               setSelectedProject(p)
               setProjectInitialTab(undefined)
               setAnalysisSection(undefined)
+              setOpenPerimeter(false)
             }
           }}
         />
