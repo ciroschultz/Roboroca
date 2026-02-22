@@ -1804,6 +1804,29 @@ async def analyze_roi(
         analysis.processing_time_seconds = round(processing_time, 2)
         analysis.completed_at = datetime.now(timezone.utc)
 
+        # Salvar imagem mascarada como imagem principal (sobrescreve original)
+        try:
+            masked_img.save(image.file_path, "JPEG", quality=95)
+            # Atualizar dimensões da imagem no DB se mudaram
+            if masked_img.size[0] != image.width or masked_img.size[1] != image.height:
+                image.width = masked_img.size[0]
+                image.height = masked_img.size[1]
+            # Deletar thumbnail para forçar regeneração
+            thumb_dir = os.path.join(os.path.dirname(image.file_path), "thumbnails")
+            thumb_path = os.path.join(thumb_dir, os.path.basename(image.file_path))
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+        except Exception as save_err:
+            logger.warning("Falha ao salvar imagem mascarada como principal: %s", save_err)
+
+        # Atualizar status do projeto para completed
+        project_result = await db.execute(
+            select(Project).where(Project.id == image.project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        if project:
+            project.status = "completed"
+
         await db.commit()
         await db.refresh(analysis)
 

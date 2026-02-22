@@ -1253,8 +1253,8 @@ async def get_project_analysis_summary(
     # Tipo de vegetação dominante
     dominant_vegetation_type = max(vegetation_types, key=vegetation_types.get) if vegetation_types else None
 
-    # Número de imagens analisadas
-    analyzed_image_ids = set(a.image_id for a in analyses if a.analysis_type == 'full_report')
+    # Número de imagens analisadas (full_report ou roi_analysis)
+    analyzed_image_ids = set(a.image_id for a in analyses if a.analysis_type in ('full_report', 'roi_analysis'))
 
     return {
         "project_id": project_id,
