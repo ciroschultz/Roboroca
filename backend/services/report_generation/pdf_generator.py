@@ -283,12 +283,26 @@ class ReportGenerator:
 
         pdf.ln(30)
 
-        # Segunda linha de métricas (se houver área e árvores)
+        # Segunda linha de métricas (se houver área e árvores, ou pest/biomass)
+        second_row_items = []
         if area_ha > 0 and tree_count > 0:
-            y_start2 = pdf.get_y()
             density = tree_count / area_ha
+            second_row_items.append(("Densidade", f"{density:.0f}/ha", COLORS['secondary']))
+        if 'pest_disease' in results:
+            pest = results['pest_disease']
+            severity = pest.get('overall_severity', '')
+            severity_labels = {'saudavel': 'Saudavel', 'leve': 'Leve', 'moderado': 'Moderado', 'severo': 'Severo'}
+            severity_label = severity_labels.get(severity, severity.title() if severity else 'N/A')
+            sev_color = COLORS['success'] if severity == 'saudavel' else COLORS['warning'] if severity in ('leve', 'moderado') else COLORS['danger']
+            second_row_items.append(("Severidade", severity_label, sev_color))
+        if 'biomass' in results:
+            biomass_index = results['biomass'].get('biomass_index', 0)
+            second_row_items.append(("Biomassa", f"{biomass_index:.0f}/100", COLORS['primary']))
+        if second_row_items:
+            y_start2 = pdf.get_y()
             pdf.set_xy(10, y_start2)
-            pdf.add_metric_box("Densidade", f"{density:.0f}/ha", COLORS['secondary'])
+            for label, value, color in second_row_items:
+                pdf.add_metric_box(label, value, color)
             pdf.ln(30)
 
         # Tipo de análise
@@ -574,6 +588,81 @@ class ReportGenerator:
                     pdf.add_key_value("Limiar ExG", f"{params['exg_threshold']:.4f}")
                 if params.get('min_tree_area') is not None:
                     pdf.add_key_value("Área Mínima", f"{params['min_tree_area']} pixels")
+
+            pdf.ln(3)
+
+        # Detecção de Pragas e Doenças
+        if 'pest_disease' in results:
+            pdf.subsection_title("Deteccao de Pragas e Doencas")
+            pest = results['pest_disease']
+
+            severity_map = {
+                'saudavel': 'Saudavel',
+                'leve': 'Leve',
+                'moderado': 'Moderado',
+                'severo': 'Severo',
+            }
+            severity_label = severity_map.get(pest.get('overall_severity', ''), pest.get('overall_severity', 'N/A'))
+            pdf.add_key_value("Severidade Geral", severity_label)
+            if pest.get('infection_rate') is not None:
+                pdf.add_key_value("Taxa de Infeccao", f"{pest['infection_rate']:.1f}%")
+            if pest.get('healthy_percentage') is not None:
+                pdf.add_key_value("Percentual Saudavel", f"{pest['healthy_percentage']:.1f}%")
+            if pest.get('chlorosis_percentage') is not None:
+                pdf.add_key_value("Clorose", f"{pest['chlorosis_percentage']:.1f}%")
+            if pest.get('necrosis_percentage') is not None:
+                pdf.add_key_value("Necrose", f"{pest['necrosis_percentage']:.1f}%")
+            if pest.get('anomaly_percentage') is not None:
+                pdf.add_key_value("Anomalias", f"{pest['anomaly_percentage']:.1f}%")
+
+            chart_data = {
+                'Saudavel': pest.get('healthy_percentage', 0),
+                'Clorose': pest.get('chlorosis_percentage', 0),
+                'Necrose': pest.get('necrosis_percentage', 0),
+                'Anomalias': pest.get('anomaly_percentage', 0),
+            }
+            if any(v > 0 for v in chart_data.values()):
+                pdf.ln(2)
+                pdf.add_simple_bar_chart(chart_data, "Distribuicao por Categoria")
+
+            if pest.get('affected_regions') is not None:
+                pdf.add_key_value("Regioes Afetadas", str(len(pest['affected_regions'])))
+
+            pdf.ln(3)
+
+        # Estimativa de Biomassa
+        if 'biomass' in results:
+            pdf.subsection_title("Estimativa de Biomassa")
+            biomass = results['biomass']
+
+            density_map = {
+                'esparsa': 'Esparsa',
+                'moderada': 'Moderada',
+                'densa': 'Densa',
+                'muito_densa': 'Muito Densa',
+            }
+            if biomass.get('biomass_index') is not None:
+                pdf.add_key_value("Indice de Biomassa", f"{biomass['biomass_index']:.1f}/100")
+            if biomass.get('density_class') is not None:
+                density_label = density_map.get(biomass['density_class'], biomass['density_class'])
+                pdf.add_key_value("Classe de Densidade", density_label)
+            if biomass.get('estimated_biomass_kg_ha') is not None:
+                pdf.add_key_value("Biomassa Estimada", f"{biomass['estimated_biomass_kg_ha']:,.1f} kg/ha")
+            if biomass.get('vegetation_coverage_pct') is not None:
+                pdf.add_key_value("Cobertura de Vegetacao", f"{biomass['vegetation_coverage_pct']:.1f}%")
+            if biomass.get('canopy_count') is not None:
+                pdf.add_key_value("Contagem de Copas", str(biomass['canopy_count']))
+            if biomass.get('avg_canopy_area') is not None:
+                pdf.add_key_value("Area Media de Copa", f"{biomass['avg_canopy_area']:.1f} pixels")
+
+            vigor = biomass.get('vigor_metrics', {})
+            if vigor:
+                pdf.ln(2)
+                pdf.add_text("Metricas de Vigor:", bold=True)
+                if vigor.get('mean_green_intensity') is not None:
+                    pdf.add_key_value("Intensidade Verde Media", f"{vigor['mean_green_intensity']:.2f}")
+                if vigor.get('mean_exg') is not None:
+                    pdf.add_key_value("ExG Medio", f"{vigor['mean_exg']:.3f}")
 
             pdf.ln(3)
 
@@ -942,6 +1031,41 @@ class ReportGenerator:
                         'type': 'info',
                         'message': 'A area apresenta boa densidade de arvores. Para calculo preciso de densidade por hectare, verifique a area total do projeto.'
                     })
+
+        # Pragas e Doenças
+        if 'pest_disease' in results:
+            pest = results['pest_disease']
+            infection_rate = pest.get('infection_rate', 0)
+            if infection_rate > 30:
+                recommendations.append({
+                    'type': 'alert',
+                    'message': 'ALERTA: Infestacao severa de pragas ou doencas detectada ({:.1f}% de infeccao). Recomenda-se inspecao presencial imediata e aplicacao de medidas de controle.'.format(infection_rate)
+                })
+            elif infection_rate > 10:
+                recommendations.append({
+                    'type': 'warning',
+                    'message': 'Sinais moderados de pragas ou doencas detectados ({:.1f}% de infeccao). Monitorar a evolucao e considerar tratamento preventivo.'.format(infection_rate)
+                })
+            elif infection_rate > 0:
+                recommendations.append({
+                    'type': 'info',
+                    'message': 'Niveis de pragas e doencas dentro do aceitavel ({:.1f}% de infeccao). Manter monitoramento periodico.'.format(infection_rate)
+                })
+
+        # Biomassa
+        if 'biomass' in results:
+            biomass = results['biomass']
+            biomass_index = biomass.get('biomass_index', 0)
+            if biomass_index < 25:
+                recommendations.append({
+                    'type': 'warning',
+                    'message': 'Baixa biomassa detectada (indice {:.1f}/100). Verificar condicoes de crescimento e considerar praticas de manejo para aumentar a densidade vegetal.'.format(biomass_index)
+                })
+            elif biomass_index >= 75:
+                recommendations.append({
+                    'type': 'success',
+                    'message': 'Excelente densidade de biomassa (indice {:.1f}/100). A area apresenta crescimento vegetal robusto.'.format(biomass_index)
+                })
 
         # Se não houver recomendações específicas
         if not recommendations:
