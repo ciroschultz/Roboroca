@@ -34,6 +34,7 @@ import {
   Info,
   ShieldAlert,
   Heart,
+  Hexagon,
 } from 'lucide-react'
 import {
   DonutChart,
@@ -79,6 +80,7 @@ interface ProjectData {
   description?: string
   latitude?: number
   longitude?: number
+  perimeter_polygon?: number[][]
   results?: {
     vegetationCoverage: number  // % de cobertura vegetal
     healthIndex: number         // % índice de saúde
@@ -141,6 +143,13 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [isDeleting, setIsDeleting] = useState(false)
   const [showProjectSwitcher, setShowProjectSwitcher] = useState(false)
   const [showPerimeterEditor, setShowPerimeterEditor] = useState(openPerimeterEditor || false)
+
+  // Reagir a mudanças de openPerimeterEditor (ex: após upload ou captura GPS)
+  useEffect(() => {
+    if (openPerimeterEditor) {
+      setShowPerimeterEditor(true)
+    }
+  }, [openPerimeterEditor])
 
   // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
   useEffect(() => {
@@ -1047,6 +1056,63 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                 Carregando dados ambientais...
               </div>
             ) : null}
+
+            {/* Tabela comparativa multi-imagem */}
+            {project.imageCount > 1 && analyses.length > 0 && (() => {
+              // Group full_report analyses by image_id
+              const imageReports = analyses
+                .filter(a => a.analysis_type === 'full_report' && a.results)
+                .reduce((acc, a) => {
+                  acc[a.image_id] = a.results as Record<string, any>
+                  return acc
+                }, {} as Record<number, Record<string, any>>)
+              const imageIds = Object.keys(imageReports).map(Number)
+              if (imageIds.length <= 1) return null
+
+              return (
+                <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6 mb-6">
+                  <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                    <Image size={18} className="text-blue-400" />
+                    Comparativo por Imagem ({imageIds.length} imagens)
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-700">
+                          <th className="text-left text-gray-400 py-2 px-3">Imagem</th>
+                          <th className="text-right text-gray-400 py-2 px-3">Vegetação %</th>
+                          <th className="text-right text-gray-400 py-2 px-3">Saúde</th>
+                          <th className="text-right text-gray-400 py-2 px-3">Árvores</th>
+                          <th className="text-right text-gray-400 py-2 px-3">Pragas %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {imageIds.map((imgId, idx) => {
+                          const r = imageReports[imgId]
+                          const veg = r?.vegetation_coverage?.vegetation_percentage ?? 0
+                          const health = r?.vegetation_health?.health_index ?? 0
+                          const trees = r?.plant_count?.total_trees || r?.tree_count?.estimated_count || 0
+                          const pests = r?.pest_disease?.infection_rate ?? 0
+                          return (
+                            <tr key={imgId} className={idx % 2 === 0 ? 'bg-gray-800/20' : ''}>
+                              <td className="py-2 px-3 text-gray-300">Imagem #{imgId}</td>
+                              <td className="py-2 px-3 text-right text-green-400">{Number(veg).toFixed(1)}%</td>
+                              <td className={`py-2 px-3 text-right ${Number(health) >= 70 ? 'text-green-400' : Number(health) >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                {Number(health).toFixed(1)}
+                              </td>
+                              <td className="py-2 px-3 text-right text-blue-400">{trees}</td>
+                              <td className={`py-2 px-3 text-right ${Number(pests) > 10 ? 'text-red-400' : 'text-green-400'}`}>
+                                {Number(pests).toFixed(1)}%
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Alertas e Recomendacoes */}
             <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl p-6">
@@ -2040,6 +2106,23 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                   </tbody>
                 </table>
               </section>
+
+              {/* 2.1 Área de Análise (Perímetro) */}
+              {project.perimeter_polygon && project.perimeter_polygon.length >= 3 && (
+                <section>
+                  <h3 className="text-lg font-bold text-gray-900 border-b-2 border-blue-500 pb-2 mb-4">Area de Analise (Perimetro)</h3>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Hexagon size={18} className="text-blue-600" />
+                      <span className="font-medium text-blue-800">Perimetro definido com {project.perimeter_polygon.length} vertices</span>
+                    </div>
+                    <p className="text-gray-600 text-sm">
+                      Os resultados apresentados neste relatorio referem-se exclusivamente a area delimitada pelo perimetro do projeto.
+                      As metricas de cobertura vegetal, saude, contagem de arvores e deteccao de pragas consideram apenas a regiao de interesse (ROI) definida.
+                    </p>
+                  </div>
+                </section>
+              )}
 
               {/* 3. Cobertura Vegetal e NDVI */}
               {(vegetationCoverage || vegetationHealth) && (

@@ -64,7 +64,10 @@
       "Bash(git check-ignore:*)",
       "Bash(find:*)",
       "Bash(cmd /c:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(cd \"C:\\\\Users\\\\Ciro\\\\Roboroça\" && uvicorn backend.main:app --reload --port 8000 2>&1)",
+      "Bash(cd:*)",
+      "Bash(cd C:\\\\Users\\\\Ciro\\\\Roboroça:*)"
     ]
   }
 }

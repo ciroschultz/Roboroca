@@ -31,8 +31,10 @@ import MapView from '@/components/MapView'
 import EmptyState from '@/components/EmptyState'
 import ProjectsList from '@/components/ProjectsList'
 import ProjectComparison from '@/components/ProjectComparison'
+import AnalysisComparison from '@/components/AnalysisComparison'
 import ProjectProfile from '@/components/ProjectProfile'
 import SettingsPage from '@/components/SettingsPage'
+import CoordinateCapture from '@/components/CoordinateCapture'
 import { useToast } from '@/components/Toast'
 import {
   Leaf,
@@ -52,6 +54,8 @@ import {
   Bug,
   Layers,
   BarChart3,
+  Play,
+  Hexagon,
 } from 'lucide-react'
 
 // Tipo de projeto
@@ -67,6 +71,7 @@ interface Project {
   description?: string
   latitude?: number
   longitude?: number
+  perimeter_polygon?: number[][]
   results?: {
     vegetationCoverage: number  // % de cobertura vegetal (era ndviMean)
     healthIndex: number         // % índice de saúde (era ndwiMean)
@@ -87,7 +92,8 @@ const initialProjects: Project[] = []
 
 export default function Home() {
   const [activeItem, setActiveItem] = useState('dashboard')
-  const [activeView, setActiveView] = useState<'dashboard' | 'upload' | 'map' | 'reports' | 'projects' | 'project-detail' | 'settings' | 'help' | 'comparison'>('dashboard')
+  const [activeView, setActiveView] = useState<'dashboard' | 'upload' | 'map' | 'reports' | 'projects' | 'project-detail' | 'settings' | 'help' | 'comparison' | 'analysis-comparison'>('dashboard')
+  const [comparisonType, setComparisonType] = useState<string>('cobertura')
   const [projects, setProjects] = useState<Project[]>(initialProjects)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
@@ -250,6 +256,7 @@ export default function Home() {
             description: p.description,
             latitude: p.latitude,
             longitude: p.longitude,
+            perimeter_polygon: p.perimeter_polygon,
           }
         })
       )
@@ -395,16 +402,10 @@ export default function Home() {
       setSelectedProject(null)
       setActiveView('comparison')
     } else if (analysisSubmenuIds.includes(id)) {
-      if (selectedProject) {
-        // Already viewing a project - navigate to its analysis tab
-        setProjectInitialTab('analysis')
-        setAnalysisSection(id)
-        setActiveView('project-detail')
-      } else {
-        // No project selected - show project list so user can pick one
-        setActiveView('projects')
-        toast.info('Selecione um projeto', 'Escolha um projeto para ver as análises')
-      }
+      // Mostrar comparação entre projetos para este tipo de análise
+      setComparisonType(id)
+      setSelectedProject(null)
+      setActiveView('analysis-comparison')
     } else {
       setSelectedProject(null)
       if (id === 'dashboard') setActiveView('dashboard')
@@ -547,6 +548,31 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+              {/* Captura por GPS — sempre cria novo projeto */}
+              <CoordinateCapture
+                onCaptureComplete={async () => {
+                  const updated = await loadProjectsFromApi(true)
+                  return updated
+                }}
+                onNavigateToPerimeter={async (capturedProjectId: number) => {
+                  const updated = await loadProjectsFromApi(true)
+                  const proj = updated.find(p => p.id === String(capturedProjectId))
+                  if (proj) {
+                    setSelectedProject(proj)
+                    setOpenPerimeter(true)
+                    setActiveView('project-detail')
+                  }
+                }}
+                onNavigateToProject={async (capturedProjectId: number) => {
+                  const updated = await loadProjectsFromApi(true)
+                  const proj = updated.find(p => p.id === String(capturedProjectId))
+                  if (proj) {
+                    setSelectedProject(proj)
+                    setActiveView('project-detail')
+                  }
+                }}
+              />
+
               <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-6">
                 <h4 className="text-blue-400 font-medium mb-2">Dica</h4>
                 <p className="text-gray-400 text-sm">
@@ -613,6 +639,17 @@ export default function Home() {
       case 'comparison':
         return (
           <ProjectComparison
+            onProjectClick={(projectId) => {
+              const project = projects.find(p => p.id === String(projectId))
+              if (project) handleProjectClick(project)
+            }}
+          />
+        )
+
+      case 'analysis-comparison':
+        return (
+          <AnalysisComparison
+            analysisType={comparisonType}
             onProjectClick={(projectId) => {
               const project = projects.find(p => p.id === String(projectId))
               if (project) handleProjectClick(project)
@@ -888,6 +925,51 @@ export default function Home() {
               </div>
             )}
 
+            {/* Card de ação rápida: projetos sem análise */}
+            {(() => {
+              const pendingProjects = projects.filter(p => p.status === 'pending' && p.imageCount > 0)
+              if (pendingProjects.length === 0) return null
+              return (
+                <div className="mb-6 bg-gradient-to-r from-[#6AAF3D]/10 to-blue-500/10 border border-[#6AAF3D]/30 rounded-xl p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-[#6AAF3D]/20 rounded-lg">
+                        <Play className="text-[#6AAF3D]" size={22} />
+                      </div>
+                      <div>
+                        <h4 className="text-white font-semibold">
+                          {pendingProjects.length} projeto{pendingProjects.length > 1 ? 's' : ''} aguardando análise
+                        </h4>
+                        <p className="text-gray-400 text-xs mt-0.5">
+                          Clique para analisar e gerar resultados
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleProjectClick(pendingProjects[0])}
+                      className="flex items-center gap-2 px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                      Analisar agora
+                      <ArrowRight size={16} />
+                    </button>
+                  </div>
+                  {pendingProjects.length > 1 && (
+                    <div className="flex flex-wrap gap-2 mt-3 pl-14">
+                      {pendingProjects.slice(0, 4).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => handleProjectClick(p)}
+                          className="px-3 py-1 bg-gray-800/50 hover:bg-gray-700/50 border border-gray-700/50 rounded-full text-xs text-gray-300 hover:text-white transition-colors"
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Cards de alertas e acesso rápido */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
               {/* Card de Alertas */}
@@ -1121,6 +1203,7 @@ export default function Home() {
       case 'map': return { title: 'Visualizar Mapa', subtitle: 'Visualize e analise as camadas geoespaciais' }
       case 'reports': return { title: 'Relatórios', subtitle: 'Gerencie e baixe seus relatórios' }
       case 'comparison': return { title: 'Comparação de Análises', subtitle: 'Compare dados e metricas entre todos os projetos' }
+      case 'analysis-comparison': return { title: 'Comparação por Tipo', subtitle: 'Compare métricas específicas entre projetos' }
       case 'projects': return { title: 'Meus Projetos', subtitle: `${projects.length} projeto${projects.length !== 1 ? 's' : ''} cadastrado${projects.length !== 1 ? 's' : ''}` }
       case 'settings': return { title: 'Configurações', subtitle: 'Gerencie sua conta e preferências' }
       case 'help': return { title: 'Ajuda', subtitle: 'Central de suporte e documentação' }

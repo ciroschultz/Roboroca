@@ -21,6 +21,7 @@ import {
   Thermometer,
   TreePine,
   Bug,
+  Hexagon,
 } from 'lucide-react'
 import { loadAuthToken } from '@/lib/api'
 
@@ -33,6 +34,7 @@ interface Project {
   imageCount: number
   area: number
   thumbnail?: string
+  perimeter_polygon?: number[][]
   results?: {
     vegetationCoverage: number
     healthIndex: number
@@ -255,8 +257,13 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
 
               {/* Info */}
               <div className="p-4">
-                <h3 className="text-white font-medium truncate group-hover:text-[#6AAF3D] transition-colors">
+                <h3 className="text-white font-medium truncate group-hover:text-[#6AAF3D] transition-colors flex items-center gap-1.5">
                   {project.name}
+                  {project.perimeter_polygon && project.perimeter_polygon.length >= 3 && (
+                    <span title={`Perímetro definido (${project.perimeter_polygon.length} vértices)`}>
+                      <Hexagon size={14} className="text-blue-400 shrink-0" />
+                    </span>
+                  )}
                 </h3>
                 <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
                   <span className="flex items-center gap-1">
@@ -357,7 +364,14 @@ export default function ProjectsList({ projects, onProjectClick, onUploadClick }
                           <Satellite size={18} className="text-gray-500" />
                         )}
                       </div>
-                      <span className="text-white font-medium">{project.name}</span>
+                      <span className="text-white font-medium flex items-center gap-1.5">
+                        {project.name}
+                        {project.perimeter_polygon && project.perimeter_polygon.length >= 3 && (
+                          <span title={`Perímetro (${project.perimeter_polygon.length} vértices)`}>
+                            <Hexagon size={13} className="text-blue-400 shrink-0" />
+                          </span>
+                        )}
+                      </span>
                     </div>
                   </td>
                   <td className="py-3 px-4 text-gray-400 text-sm">{project.createdAt}</td>
