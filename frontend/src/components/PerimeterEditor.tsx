@@ -21,6 +21,7 @@ import {
   analyzeROI,
   analyzeProject,
   getProjectAnalysisSummary,
+  saveProjectPerimeter,
   type ImageData,
 } from '@/lib/api'
 import { useToast } from './Toast'
@@ -48,7 +49,10 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
   const [imageLoading, setImageLoading] = useState(false)
   const [imageBitmap, setImageBitmap] = useState<HTMLImageElement | null>(null)
 
-  // Drawing state
+  // Per-image perimeter storage: imageId → points
+  const [perimeterMap, setPerimeterMap] = useState<Record<number, Point[]>>({})
+
+  // Drawing state (for current image)
   const [drawing, setDrawing] = useState(false)
   const [points, setPoints] = useState<Point[]>([])
   const [closed, setClosed] = useState(false)
@@ -88,14 +92,37 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     load()
   }, [projectId])
 
+  // Save current perimeter before switching images
+  const saveCurrentPerimeter = useCallback(() => {
+    if (selectedImage && points.length >= 3 && closed) {
+      setPerimeterMap(prev => ({ ...prev, [selectedImage.id]: points }))
+    }
+  }, [selectedImage, points, closed])
+
+  // Count how many images have perimeters defined
+  const imagesWithPerimeter = images.filter(img => {
+    if (img.id === selectedImage?.id) return points.length >= 3 && closed
+    return perimeterMap[img.id] && perimeterMap[img.id].length >= 3
+  }).length
+
+  const allPerimetersDefined = images.length > 0 && imagesWithPerimeter === images.length
+
   // Load selected image - use FULL image (not thumbnail) for better quality
   useEffect(() => {
     if (!selectedImage) return
     setImageLoading(true)
     setImageBitmap(null)
-    setPoints([])
-    setClosed(false)
-    setDrawing(false)
+    // Restore saved perimeter or reset
+    const savedPoints = perimeterMap[selectedImage.id]
+    if (savedPoints && savedPoints.length >= 3) {
+      setPoints(savedPoints)
+      setClosed(true)
+      setDrawing(false)
+    } else {
+      setPoints([])
+      setClosed(false)
+      setDrawing(false)
+    }
     setShowOverlay(true)
     setZoom(1)
     setPan({ x: 0, y: 0 })
@@ -334,61 +361,94 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     setDrawing(true)
   }
 
-  // Run ALL analyses on the image
+  // Run ALL analyses on all project images using per-image perimeters
   const handleAnalyze = async () => {
-    if (!selectedImage || points.length < 3) return
+    // Save current image's perimeter first
+    saveCurrentPerimeter()
+
+    // Collect all perimeters (current + saved)
+    const allPerimeters: Record<number, Point[]> = { ...perimeterMap }
+    if (selectedImage && points.length >= 3 && closed) {
+      allPerimeters[selectedImage.id] = points
+    }
+
     setAnalyzing(true)
     setProgressStep(0)
-    setProgressTotal(ANALYSIS_STEPS.length)
 
-    const polygon = points.map(p => [Math.round(p.x), Math.round(p.y)])
-    const imgId = selectedImage.id
-    let completedSteps = 0
+    // Total steps: 1 (save perimeter) + N images (ROI) + 1 (ML pipeline) + 1 (polling)
+    const totalSteps = 1 + images.length + 1 + 1
+    setProgressTotal(totalSteps)
+
+    let currentStep = 0
     let errors = 0
 
-    const runStep = async (stepIdx: number, fn: () => Promise<unknown>) => {
-      setProgressStep(stepIdx + 1)
-      setProgressLabel(ANALYSIS_STEPS[stepIdx].label)
+    const runStep = async (label: string, fn: () => Promise<unknown>) => {
+      currentStep++
+      setProgressStep(currentStep)
+      setProgressLabel(label)
       try {
         await fn()
       } catch (err) {
-        console.warn(`Passo "${ANALYSIS_STEPS[stepIdx].key}" falhou:`, err)
+        console.warn(`Passo "${label}" falhou:`, err)
         errors++
       }
-      completedSteps++
     }
 
     try {
-      // 1. ROI analysis — masks image and runs vegetation/health/count/pest/biomass inside perimeter
-      // Backend saves masked image over original file
-      await runStep(0, () => analyzeROI(imgId, polygon, ['vegetation', 'health', 'plant_count', 'pest_disease', 'biomass']))
+      // 0. Salvar perímetro normalizado da primeira imagem no projeto
+      const firstImg = images[0]
+      const firstPerimeter = allPerimeters[firstImg.id]
+      let normalizedPolygon: number[][] | null = null
+      if (firstPerimeter && firstImg.width && firstImg.height) {
+        normalizedPolygon = firstPerimeter.map(p => [
+          p.x / firstImg.width!,
+          p.y / firstImg.height!,
+        ])
+        await runStep('Salvando perímetro do projeto...', () =>
+          saveProjectPerimeter(projectId, normalizedPolygon!)
+        )
+      }
 
-      // 2. Full ML pipeline on the (now masked) image — generates full_report with
-      // segmentation, classification, YOLO, tree count, etc. needed for project overview
-      // This dispatches a background task on the server
-      await runStep(1, () => analyzeProject(projectId))
+      // 1. ROI analysis for EACH image using its own perimeter
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i]
+        const imgPerimeter = allPerimeters[img.id]
+        if (!imgPerimeter || imgPerimeter.length < 3) continue
+        if (!img.width || !img.height) continue
 
-      // 3. Poll until the background analysis finishes (full_report completed)
-      await runStep(2, async () => {
-        const maxAttempts = 60 // max ~2 minutes
+        const imgPolygon = imgPerimeter.map(p => [Math.round(p.x), Math.round(p.y)])
+
+        await runStep(
+          `Análise ROI da imagem ${i + 1}/${images.length}...`,
+          () => analyzeROI(img.id, imgPolygon, ['vegetation', 'health', 'plant_count', 'pest_disease', 'biomass'])
+        )
+      }
+
+      // 2. Full ML pipeline
+      await runStep('Pipeline ML completo (segmentação, classificação, detecção)...', () =>
+        analyzeProject(projectId)
+      )
+
+      // 3. Poll until the background analysis finishes
+      await runStep('Aguardando conclusão das análises...', async () => {
+        const maxAttempts = 60
         for (let i = 0; i < maxAttempts; i++) {
           await new Promise(resolve => setTimeout(resolve, 2000))
           try {
             const summary = await getProjectAnalysisSummary(projectId)
             if (summary.analyzed_images > 0 && summary.status === 'completed') {
-              return // Analysis finished
+              return
             }
           } catch {
             // Ignore polling errors, keep trying
           }
         }
-        // Timeout - proceed anyway, data may load on next refresh
       })
 
       if (errors === 0) {
-        toast.success('Análise completa', 'Todas as análises foram realizadas com sucesso')
+        toast.success('Análise completa', `Todas as ${images.length} imagem(ns) foram analisadas com sucesso`)
       } else {
-        toast.success('Análise concluída', `${completedSteps - errors} de ${completedSteps} etapas finalizadas`)
+        toast.success('Análise concluída', `${currentStep - errors} de ${currentStep} etapas finalizadas`)
       }
       onComplete()
     } catch (err) {
@@ -491,7 +551,8 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
         <div className="text-sm text-gray-400">
           {!drawing && !closed && !analyzing && 'Clique em "Desenhar" para iniciar o perímetro'}
           {drawing && !closed && 'Clique para adicionar pontos. Duplo-clique para fechar o perímetro.'}
-          {closed && !analyzing && 'Perímetro definido. Clique "Analisar" para processar.'}
+          {closed && !analyzing && images.length > 1 && !allPerimetersDefined && `Perímetro definido (${imagesWithPerimeter}/${images.length}). Delimite as demais imagens.`}
+          {closed && !analyzing && (images.length === 1 || allPerimetersDefined) && 'Todos os perímetros definidos. Clique "Analisar" para processar.'}
           {analyzing && `Processando análise ${progressStep}/${progressTotal}...`}
         </div>
 
@@ -501,25 +562,38 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
       <div className="flex flex-1 min-h-0">
         {/* Image thumbnails sidebar (if multiple images) */}
         {images.length > 1 && (
-          <div className="w-20 bg-gray-900 border-r border-gray-800 overflow-y-auto shrink-0 p-2 flex flex-col gap-2">
-            {images.map((img, idx) => (
-              <button
-                key={img.id}
-                onClick={() => !analyzing && setSelectedImageIdx(idx)}
-                className={`relative w-full aspect-square rounded-lg overflow-hidden border-2 transition-colors ${
-                  idx === selectedImageIdx ? 'border-red-500' : 'border-transparent hover:border-gray-600'
-                } ${analyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                title={img.original_filename}
-                disabled={analyzing}
-              >
-                <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">
-                  <ImageIcon size={16} />
-                </div>
-                <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-gray-300 text-center py-0.5 truncate px-1">
-                  {idx + 1}
-                </span>
-              </button>
-            ))}
+          <div className="w-24 bg-gray-900 border-r border-gray-800 overflow-y-auto shrink-0 p-2 flex flex-col gap-2">
+            <div className="text-[10px] text-gray-500 text-center mb-1">
+              {imagesWithPerimeter}/{images.length} delimitadas
+            </div>
+            {images.map((img, idx) => {
+              const hasPerimeter = img.id === selectedImage?.id
+                ? (points.length >= 3 && closed)
+                : (perimeterMap[img.id] && perimeterMap[img.id].length >= 3)
+              return (
+                <button
+                  key={img.id}
+                  onClick={() => {
+                    if (analyzing) return
+                    saveCurrentPerimeter()
+                    setSelectedImageIdx(idx)
+                  }}
+                  className={`relative w-full aspect-square rounded-lg overflow-hidden border-2 transition-colors ${
+                    idx === selectedImageIdx ? 'border-red-500' : hasPerimeter ? 'border-green-500/60' : 'border-transparent hover:border-gray-600'
+                  } ${analyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title={`${img.original_filename}${hasPerimeter ? ' (perímetro definido)' : ''}`}
+                  disabled={analyzing}
+                >
+                  <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500">
+                    <ImageIcon size={16} />
+                  </div>
+                  <span className="absolute bottom-0 left-0 right-0 bg-black/70 text-[10px] text-gray-300 text-center py-0.5 truncate px-1 flex items-center justify-center gap-0.5">
+                    {idx + 1}
+                    {hasPerimeter && <span className="text-green-400">&#10003;</span>}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         )}
 
@@ -621,16 +695,24 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
             </button>
           </div>
 
-          {/* Analyze button (appears when polygon is closed) */}
-          {closed && !analyzing && (
+          {/* Analyze button — only when ALL images have perimeters */}
+          {closed && !analyzing && (images.length === 1 || allPerimetersDefined) && (
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
               <button
                 onClick={handleAnalyze}
                 className="flex items-center gap-3 px-8 py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl text-lg font-semibold shadow-2xl transition-all hover:scale-105"
               >
                 <Play size={22} />
-                Analisar Área Delimitada
+                Analisar {images.length > 1 ? `${images.length} Imagens` : 'Área Delimitada'}
               </button>
+            </div>
+          )}
+          {/* Hint to define remaining perimeters */}
+          {closed && !analyzing && images.length > 1 && !allPerimetersDefined && (
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
+              <div className="px-6 py-3 bg-yellow-600/90 text-white rounded-xl text-sm font-medium shadow-2xl">
+                Delimite o perímetro das {images.length - imagesWithPerimeter} imagem(ns) restante(s) antes de analisar
+              </div>
             </div>
           )}
 
