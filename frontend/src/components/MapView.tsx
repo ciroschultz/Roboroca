@@ -66,7 +66,7 @@ type MapMode = 'project'
 interface Layer {
   id: string
   name: string
-  type: 'original' | 'vegetation' | 'health' | 'classification' | 'detection' | 'heatmap' | 'roi' | 'trees' | 'pests' | 'water'
+  type: 'original' | 'vegetation' | 'health' | 'classification' | 'detection' | 'heatmap' | 'roi' | 'trees' | 'pests'
   visible: boolean
   opacity: number
   color: string
@@ -85,6 +85,7 @@ interface Project {
   image_count: number
   created_at: string
   updated_at: string
+  perimeter_polygon?: number[][]
 }
 
 interface ProjectImage {
@@ -192,7 +193,6 @@ export default function MapView({ projectId }: MapViewProps) {
     { id: 'health', name: 'Saude', type: 'health', visible: false, opacity: 70, color: '#F59E0B' },
     { id: 'trees', name: 'Arvores Detectadas', type: 'trees', visible: false, opacity: 85, color: '#22C55E' },
     { id: 'pests', name: 'Areas com Pragas', type: 'pests', visible: false, opacity: 75, color: '#EF4444' },
-    { id: 'water', name: "Corpos d'Agua", type: 'water', visible: false, opacity: 70, color: '#3B82F6' },
     { id: 'heatmap', name: 'Mapa de Calor', type: 'heatmap', visible: false, opacity: 60, color: '#EF4444' },
   ])
 
@@ -224,6 +224,10 @@ export default function MapView({ projectId }: MapViewProps) {
   const [savingAnnotation, setSavingAnnotation] = useState(false)
   const [imageGSD, setImageGSD] = useState<ImageGSD | null>(null)
 
+  // Color picker dropdown
+  const [showColorPicker, setShowColorPicker] = useState(false)
+  const colorPickerRef = useRef<HTMLDivElement>(null)
+
   // Fullscreen
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -244,6 +248,19 @@ export default function MapView({ projectId }: MapViewProps) {
     document.addEventListener('fullscreenchange', handleFullscreenChange)
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
   }, [])
+
+  // Close color picker on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+        setShowColorPicker(false)
+      }
+    }
+    if (showColorPicker) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showColorPicker])
 
   // Tool instruction messages
   const toolInstructions: Record<string, string> = {
@@ -333,6 +350,7 @@ export default function MapView({ projectId }: MapViewProps) {
         image_count: p.image_count,
         created_at: p.created_at,
         updated_at: p.updated_at,
+        perimeter_polygon: p.perimeter_polygon,
       })))
     } catch (err: any) {
       if (err?.status === 401) {
@@ -1073,16 +1091,27 @@ export default function MapView({ projectId }: MapViewProps) {
 
                       {/* Seletor de cor */}
                       <div className="w-px h-6 bg-gray-600 mx-1" />
-                      <div className="flex items-center gap-1">
-                        {annotationColors.slice(0, 4).map(color => (
-                          <button
-                            key={color}
-                            onClick={() => setSelectedColor(color)}
-                            className={`w-6 h-6 rounded-full border-2 transition-all ${selectedColor === color ? 'border-white scale-110' : 'border-transparent'}`}
-                            style={{ backgroundColor: color }}
-                            title={`Cor: ${color}`}
-                          />
-                        ))}
+                      <div className="relative" ref={colorPickerRef}>
+                        <button
+                          onClick={() => setShowColorPicker(v => !v)}
+                          className={`p-2 rounded-lg transition-colors ${showColorPicker ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
+                          title="Selecionar cor"
+                        >
+                          <Palette size={18} style={{ color: selectedColor }} />
+                        </button>
+                        {showColorPicker && (
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-2 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-30 grid grid-cols-4 gap-1.5">
+                            {annotationColors.map(color => (
+                              <button
+                                key={color}
+                                onClick={() => { setSelectedColor(color); setShowColorPicker(false) }}
+                                className={`w-7 h-7 rounded-full border-2 transition-all hover:scale-110 ${selectedColor === color ? 'border-white scale-110' : 'border-transparent'}`}
+                                style={{ backgroundColor: color }}
+                                title={color}
+                              />
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1381,21 +1410,6 @@ export default function MapView({ projectId }: MapViewProps) {
                         />
                       )
                     })()}
-                    {/* Camada water - overlay azul */}
-                    {layers.find(l => l.type === 'water')?.visible && (() => {
-                      const waterLayer = layers.find(l => l.type === 'water')!
-                      return (
-                        <div
-                          className="absolute inset-0 pointer-events-none"
-                          style={{
-                            background: 'radial-gradient(ellipse at 60% 70%, rgba(59,130,246,0.3) 0%, transparent 60%)',
-                            mixBlendMode: 'overlay',
-                            opacity: waterLayer.opacity / 100,
-                          }}
-                        />
-                      )
-                    })()}
-
                     {/* UTM Coordinate Grid */}
                     {utmInfo && utmInfo.has_gps && projectImages[selectedImageIndex]?.width && projectImages[selectedImageIndex]?.height && (
                       <CoordinateGrid
@@ -1412,23 +1426,41 @@ export default function MapView({ projectId }: MapViewProps) {
                         const treesLayer = layers.find(l => l.type === 'trees')!
                         const plantCount = (fullReportData as any)?.plant_count || (fullReportData as any)?.tree_count
                         const treeList = plantCount?.locations || plantCount?.trees || []
-                        return treeList.map((tree: any, i: number) => {
-                          const center = tree.center
-                          if (!center) return null
-                          const radius = Math.max(4, Math.sqrt((tree.area || 200)) / 3)
+                        const totalTrees = plantCount?.total_trees || plantCount?.estimated_count || 0
+                        const hasLocations = treeList.length > 0 && treeList.some((t: any) => t.center)
+                        if (hasLocations) {
+                          return treeList.map((tree: any, i: number) => {
+                            const center = tree.center
+                            if (!center) return null
+                            const radius = Math.max(4, Math.sqrt((tree.area || 200)) / 3)
+                            return (
+                              <circle
+                                key={`tree-${i}`}
+                                cx={center[0]}
+                                cy={center[1]}
+                                r={radius}
+                                fill="rgba(34,197,94,0.5)"
+                                stroke="#22C55E"
+                                strokeWidth={1.5}
+                                opacity={treesLayer.opacity / 100}
+                              />
+                            )
+                          })
+                        }
+                        // Badge when data exists but no coordinates
+                        if (totalTrees > 0) {
+                          const imgW = projectImages[selectedImageIndex]?.width || 800
+                          const imgH = projectImages[selectedImageIndex]?.height || 600
                           return (
-                            <circle
-                              key={`tree-${i}`}
-                              cx={center[0]}
-                              cy={center[1]}
-                              r={radius}
-                              fill="rgba(34,197,94,0.5)"
-                              stroke="#22C55E"
-                              strokeWidth={1.5}
-                              opacity={treesLayer.opacity / 100}
-                            />
+                            <g opacity={treesLayer.opacity / 100}>
+                              <rect x={imgW/2 - 70} y={imgH/2 - 18} width={140} height={36} rx={18} fill="rgba(34,197,94,0.85)" />
+                              <text x={imgW/2} y={imgH/2 + 6} textAnchor="middle" fill="white" fontSize={14} fontWeight="bold">
+                                {totalTrees} árvores
+                              </text>
+                            </g>
                           )
-                        })
+                        }
+                        return null
                       })()}
 
                       {/* SVG overlay: Pragas */}
@@ -1436,27 +1468,82 @@ export default function MapView({ projectId }: MapViewProps) {
                         const pestsLayer = layers.find(l => l.type === 'pests')!
                         const pestData = (fullReportData as any)?.pest_disease
                         const regions = pestData?.affected_regions || []
-                        return regions.map((region: any, i: number) => {
-                          const bbox = region.bbox
-                          if (!bbox || bbox.length < 4) return null
+                        const infectionRate = pestData?.infection_rate || 0
+                        const hasRegions = regions.length > 0 && regions.some((r: any) => r.bbox && r.bbox.length >= 4)
+                        if (hasRegions) {
+                          return regions.map((region: any, i: number) => {
+                            const bbox = region.bbox
+                            if (!bbox || bbox.length < 4) return null
+                            return (
+                              <rect
+                                key={`pest-${i}`}
+                                x={bbox[0]}
+                                y={bbox[1]}
+                                width={bbox[2] - bbox[0]}
+                                height={bbox[3] - bbox[1]}
+                                fill="rgba(239,68,68,0.3)"
+                                stroke="#EF4444"
+                                strokeWidth={1.5}
+                                strokeDasharray="4,2"
+                                opacity={pestsLayer.opacity / 100}
+                              />
+                            )
+                          })
+                        }
+                        // Badge when data exists but no coordinates
+                        if (infectionRate > 0) {
+                          const imgW = projectImages[selectedImageIndex]?.width || 800
+                          const imgH = projectImages[selectedImageIndex]?.height || 600
                           return (
-                            <rect
-                              key={`pest-${i}`}
-                              x={bbox[0]}
-                              y={bbox[1]}
-                              width={bbox[2] - bbox[0]}
-                              height={bbox[3] - bbox[1]}
-                              fill="rgba(239,68,68,0.3)"
-                              stroke="#EF4444"
-                              strokeWidth={1.5}
-                              strokeDasharray="4,2"
-                              opacity={pestsLayer.opacity / 100}
-                            />
+                            <g opacity={pestsLayer.opacity / 100}>
+                              <rect x={imgW/2 - 80} y={imgH/2 + 25} width={160} height={36} rx={18} fill="rgba(239,68,68,0.85)" />
+                              <text x={imgW/2} y={imgH/2 + 49} textAnchor="middle" fill="white" fontSize={14} fontWeight="bold">
+                                {infectionRate.toFixed(1)}% infecção
+                              </text>
+                            </g>
                           )
-                        })
+                        }
+                        return null
                       })()}
 
-                      {/* ROI polygon visual */}
+                      {/* Perímetro salvo do projeto (coordenadas normalizadas 0-1) */}
+                      {!roiPolygon && selectedProject?.perimeter_polygon && selectedProject.perimeter_polygon.length >= 3 &&
+                        layers.find(l => l.type === 'roi')?.visible &&
+                        projectImages[selectedImageIndex]?.width && projectImages[selectedImageIndex]?.height && (() => {
+                        const imgW = projectImages[selectedImageIndex].width!
+                        const imgH = projectImages[selectedImageIndex].height!
+                        const perimLayer = layers.find(l => l.type === 'roi')!
+                        return (
+                          <>
+                            {/* Sombra vermelha fora do perímetro */}
+                            <defs>
+                              <mask id="perimeter-mask">
+                                <rect x="0" y="0" width={imgW} height={imgH} fill="white" />
+                                <polygon
+                                  points={selectedProject.perimeter_polygon!.map(p => `${p[0] * imgW},${p[1] * imgH}`).join(' ')}
+                                  fill="black"
+                                />
+                              </mask>
+                            </defs>
+                            <rect
+                              x="0" y="0" width={imgW} height={imgH}
+                              fill="rgba(255, 50, 50, 0.15)"
+                              mask="url(#perimeter-mask)"
+                              opacity={perimLayer.opacity / 100}
+                            />
+                            {/* Contorno do perímetro */}
+                            <polygon
+                              points={selectedProject.perimeter_polygon!.map(p => `${p[0] * imgW},${p[1] * imgH}`).join(' ')}
+                              fill="none"
+                              stroke="rgba(255, 50, 50, 0.7)"
+                              strokeWidth={2}
+                              opacity={perimLayer.opacity / 100}
+                            />
+                          </>
+                        )
+                      })()}
+
+                      {/* ROI polygon visual (desenhado interativamente) */}
                       {roiPolygon && roiPolygon.length >= 3 && layers.find(l => l.type === 'roi')?.visible && (
                         <polygon
                           points={roiPolygon.map(p => p.join(',')).join(' ')}
@@ -1846,7 +1933,33 @@ export default function MapView({ projectId }: MapViewProps) {
                 </div>
 
                 <div className="space-y-2">
-                  {layers.map(layer => (
+                  {layers.map(layer => {
+                    // Summary data for each layer
+                    const getLayerSummary = (): string | null => {
+                      if (layer.id === 'perimeter' && selectedProject?.perimeter_polygon) {
+                        return `${selectedProject.perimeter_polygon.length} vértices`
+                      }
+                      if (layer.id === 'vegetation' && analysisSummary && analysisSummary.vegetation_coverage_avg > 0) {
+                        return `${analysisSummary.vegetation_coverage_avg.toFixed(1)}%`
+                      }
+                      if (layer.id === 'health' && analysisSummary && analysisSummary.health_index_avg > 0) {
+                        return `${analysisSummary.health_index_avg.toFixed(1)} índice`
+                      }
+                      if (layer.id === 'trees' && fullReportData) {
+                        const pc = (fullReportData as any)?.plant_count || (fullReportData as any)?.tree_count
+                        const total = pc?.total_trees || pc?.estimated_count || 0
+                        if (total > 0) return `${total} árvores`
+                      }
+                      if (layer.id === 'pests' && fullReportData) {
+                        const pd = (fullReportData as any)?.pest_disease
+                        const rate = pd?.infection_rate || 0
+                        if (rate > 0) return `${rate.toFixed(1)}% infecção`
+                      }
+                      return null
+                    }
+                    const summary = getLayerSummary()
+
+                    return (
                     <div
                       key={layer.id}
                       className={`p-3 rounded-lg transition-colors ${
@@ -1854,18 +1967,23 @@ export default function MapView({ projectId }: MapViewProps) {
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           <div
-                            className="w-3 h-3 rounded-full"
+                            className="w-3 h-3 rounded-full shrink-0"
                             style={{ backgroundColor: layer.color }}
                           />
-                          <span className={`text-sm ${layer.visible ? 'text-white' : 'text-gray-500'}`}>
+                          <span className={`text-sm truncate ${layer.visible ? 'text-white' : 'text-gray-500'}`}>
                             {layer.name}
                           </span>
+                          {summary && layer.visible && (
+                            <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">
+                              {summary}
+                            </span>
+                          )}
                         </div>
                         <button
                           onClick={() => toggleLayer(layer.id)}
-                          className="p-1 hover:bg-gray-700 rounded transition-colors"
+                          className="p-1 hover:bg-gray-700 rounded transition-colors shrink-0"
                         >
                           {layer.visible ? (
                             <Eye size={16} className="text-[#6AAF3D]" />
@@ -1888,7 +2006,8 @@ export default function MapView({ projectId }: MapViewProps) {
                         </div>
                       )}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
 
                 {/* Informações de análise do projeto */}
