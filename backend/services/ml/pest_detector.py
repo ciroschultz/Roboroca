@@ -183,6 +183,7 @@ def detect_pest_disease(
     image_path: str,
     anomaly_threshold: float = 2.0,
     min_region_area: int = 100,
+    roi_mask: np.ndarray = None,
 ) -> Dict[str, Any]:
     """
     Detectar pragas e doencas em vegetacao via analise de cor e textura.
@@ -208,6 +209,15 @@ def detect_pest_disease(
             img = img.resize(new_size, PILImage.Resampling.LANCZOS)
 
         image = np.array(img)
+
+    # Aplicar máscara ROI se fornecida
+    if roi_mask is not None:
+        mask_resized = cv2.resize(
+            roi_mask.astype(np.uint8),
+            (image.shape[1], image.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        image = image * mask_resized[:, :, np.newaxis]
 
     # 1. Mascara de vegetacao (ExG)
     vegetation_mask = _compute_exg_mask(image)

@@ -10,6 +10,9 @@ import os
 import time
 from datetime import datetime, timezone
 
+import cv2
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
@@ -77,12 +80,125 @@ from backend.utils.files import is_image_file, is_video_file
 router = APIRouter(prefix="/projects")
 
 
-async def run_image_full_analysis(image, analysis, db):
+def _build_roi_mask_from_polygon(image_path: str, polygon_points: list) -> np.ndarray:
+    """
+    Cria máscara binária (0/1) a partir de polígono normalizado (0-1).
+    Retorna array uint8 do mesmo tamanho da imagem.
+    """
+    from PIL import Image as PILImage
+    with PILImage.open(image_path) as img:
+        w, h = img.size
+
+    mask = np.zeros((h, w), dtype=np.uint8)
+    # Converter coordenadas normalizadas para pixels
+    pts = np.array(
+        [[int(p[0] * w), int(p[1] * h)] for p in polygon_points],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(mask, [pts], 1)
+    return mask
+
+
+def _compute_confidence_score(image, results: dict, has_perimeter: bool) -> dict:
+    """
+    Calcular indicador de confiança baseado em múltiplos fatores.
+
+    Fatores considerados:
+    - Resolução da imagem (largura x altura)
+    - Se tem coordenadas GPS
+    - Se tem perímetro definido
+    - Número de análises ML completadas com sucesso
+    - Qualidade dos dados de vegetação
+
+    Returns:
+        dict com score (0-100), level (alta/media/baixa), factors
+    """
+    score = 0
+    factors = []
+
+    # 1. Resolução da imagem (até 25 pontos)
+    resolution = (image.width or 0) * (image.height or 0)
+    if resolution >= 4_000_000:  # >= 4MP
+        score += 25
+        factors.append("Resolução alta (>= 4MP)")
+    elif resolution >= 1_000_000:  # >= 1MP
+        score += 15
+        factors.append("Resolução média (>= 1MP)")
+    elif resolution > 0:
+        score += 5
+        factors.append("Resolução baixa (< 1MP)")
+
+    # 2. GPS disponível (15 pontos)
+    if image.center_lat and image.center_lon:
+        score += 15
+        factors.append("Coordenadas GPS disponíveis")
+    else:
+        factors.append("Sem coordenadas GPS")
+
+    # 3. Perímetro definido (15 pontos)
+    if has_perimeter:
+        score += 15
+        factors.append("Perímetro definido pelo usuário")
+    else:
+        factors.append("Sem perímetro definido")
+
+    # 4. Análises ML completadas (até 30 pontos)
+    ml_keys = ['segmentation', 'scene_classification', 'object_detection',
+               'tree_count', 'pest_disease', 'biomass', 'vegetation_type']
+    completed_ml = sum(1 for k in ml_keys if k in results and results[k])
+    ml_score = min(30, completed_ml * 5)
+    score += ml_score
+    if completed_ml >= 5:
+        factors.append(f"{completed_ml} análises ML concluídas")
+    elif completed_ml > 0:
+        factors.append(f"Apenas {completed_ml} análises ML concluídas")
+    else:
+        factors.append("Nenhuma análise ML disponível")
+
+    # 5. Dados de vegetação robustos (15 pontos)
+    veg_data = results.get('vegetation_coverage') or results.get('coverage')
+    if veg_data and veg_data.get('vegetation_percentage', 0) > 0:
+        score += 10
+        factors.append("Dados de vegetação presentes")
+    health_data = results.get('vegetation_health') or results.get('health')
+    if health_data and health_data.get('health_index', 0) > 0:
+        score += 5
+        factors.append("Índice de saúde calculado")
+
+    # Erro ML reduz confiança
+    ml_errors = results.get('ml_errors', [])
+    if ml_errors:
+        penalty = min(15, len(ml_errors) * 5)
+        score -= penalty
+        factors.append(f"{len(ml_errors)} erro(s) em análises ML")
+
+    score = max(0, min(100, score))
+
+    # Classificar nível
+    if score >= 70:
+        level = "alta"
+    elif score >= 40:
+        level = "media"
+    else:
+        level = "baixa"
+
+    return {
+        "score": score,
+        "level": level,
+        "factors": factors,
+    }
+
+
+async def run_image_full_analysis(image, analysis, db, roi_mask=None):
     """
     Executar análise completa (básica + ML) para uma imagem.
 
     Cada etapa ML é protegida individualmente para que falhas
     parciais não impeçam as outras análises.
+
+    Args:
+        roi_mask: Máscara binária (0/1) do perímetro. Se fornecida,
+                  as análises heurísticas são restritas a essa área.
     """
     start_time = time.time()
 
@@ -166,7 +282,9 @@ async def run_image_full_analysis(image, analysis, db):
         # 3. Contagem de árvores por segmentação (SEMPRE executar - independente de ML)
         if count_trees_by_segmentation is not None:
             try:
-                tree_count = await asyncio.to_thread(count_trees_by_segmentation, image.file_path)
+                tree_count = await asyncio.to_thread(
+                    count_trees_by_segmentation, image.file_path, roi_mask=roi_mask
+                )
                 analysis_results["tree_count"] = tree_count
 
                 # Atualizar object_detection com contagem de árvores se não houver detecções YOLO
@@ -195,7 +313,9 @@ async def run_image_full_analysis(image, analysis, db):
         # 4. Detecção de pragas/doenças (SEMPRE executar - independente de torch)
         if detect_pest_disease is not None:
             try:
-                pest_results = await asyncio.to_thread(detect_pest_disease, image.file_path)
+                pest_results = await asyncio.to_thread(
+                    detect_pest_disease, image.file_path, roi_mask=roi_mask
+                )
                 analysis_results["pest_disease"] = pest_results
             except Exception as e:
                 if "ml_errors" not in analysis_results:
@@ -205,7 +325,9 @@ async def run_image_full_analysis(image, analysis, db):
         # 5. Estimativa de biomassa (SEMPRE executar - independente de torch)
         if estimate_biomass is not None:
             try:
-                biomass = await asyncio.to_thread(estimate_biomass, image.file_path)
+                biomass = await asyncio.to_thread(
+                    estimate_biomass, image.file_path, roi_mask=roi_mask
+                )
                 analysis_results["biomass"] = biomass
             except Exception as e:
                 if "ml_errors" not in analysis_results:
@@ -215,6 +337,10 @@ async def run_image_full_analysis(image, analysis, db):
         # Remover ml_errors se estiver vazio
         if "ml_errors" in analysis_results and not analysis_results["ml_errors"]:
             del analysis_results["ml_errors"]
+
+        # 6. Calcular indicador de confiança
+        confidence = _compute_confidence_score(image, analysis_results, roi_mask is not None)
+        analysis_results["confidence"] = confidence
 
         processing_time = time.time() - start_time
 
@@ -300,6 +426,13 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
 
     async with async_session_maker() as db:
         try:
+            # Carregar perímetro do projeto (se definido)
+            project_result = await db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            perimeter_polygon = project.perimeter_polygon if project else None
+
             # Processar imagens
             for image_id in image_ids:
                 result = await db.execute(
@@ -321,18 +454,33 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 if existing.scalar_one_or_none():
                     continue
 
+                # Gerar máscara ROI a partir do perímetro do projeto
+                roi_mask = None
+                if perimeter_polygon and len(perimeter_polygon) >= 3:
+                    try:
+                        roi_mask = await asyncio.to_thread(
+                            _build_roi_mask_from_polygon, image.file_path, perimeter_polygon
+                        )
+                    except Exception:
+                        roi_mask = None  # Fallback: analisar imagem inteira
+
                 # Criar registro de análise
                 analysis = Analysis(
                     analysis_type="full_report",
                     status="processing",
                     image_id=image_id,
-                    config={"threshold": 0.3, "auto_triggered": True, "ml_enabled": ML_AVAILABLE}
+                    config={
+                        "threshold": 0.3,
+                        "auto_triggered": True,
+                        "ml_enabled": ML_AVAILABLE,
+                        "has_perimeter": perimeter_polygon is not None,
+                    }
                 )
                 db.add(analysis)
                 await db.commit()
                 await db.refresh(analysis)
 
-                await run_image_full_analysis(image, analysis, db)
+                await run_image_full_analysis(image, analysis, db, roi_mask=roi_mask)
 
             # Processar vídeos
             for video_id in video_ids:
@@ -651,6 +799,242 @@ async def get_projects_comparison(
     return {"projects": projects_data}
 
 
+@router.get("/comparison/detailed")
+async def get_projects_comparison_detailed(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Comparação detalhada de projetos com métricas por tipo de análise.
+
+    Retorna para cada projeto métricas granulares de vegetação,
+    saúde, uso do solo, contagem de plantas, pragas/doenças,
+    biomassa, NDVI/ExG e análise de cores.
+    """
+    from sqlalchemy.orm import selectinload
+
+    # Buscar todos os projetos do usuário com imagens
+    projects_result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.images))
+        .where(Project.owner_id == current_user.id)
+        .order_by(Project.created_at.desc())
+    )
+    projects = projects_result.scalars().all()
+
+    projects_data = []
+
+    for project in projects:
+        image_count = len(project.images) if project.images else 0
+
+        # Buscar todas as análises completas (full_report + roi_analysis)
+        analyses_result = await db.execute(
+            select(Analysis)
+            .join(Image, Analysis.image_id == Image.id)
+            .where(
+                Image.project_id == project.id,
+                Analysis.analysis_type.in_(["full_report", "roi_analysis"]),
+                Analysis.status == "completed"
+            )
+        )
+        analyses = analyses_result.scalars().all()
+
+        # Inicializar agregadores
+        vegetation_percentages = []
+        vegetation_pixel_counts = []
+        health_indices = []
+        healthy_percentages = []
+        stressed_percentages = []
+        gli_means = []
+        land_use_totals = {}
+        total_trees_sum = 0
+        coverage_pcts = []
+        avg_tree_areas = []
+        plant_health_indices = []
+        plant_stressed_pcts = []
+        pest_infection_rates = []
+        pest_severities = []
+        pest_chlorosis_pcts = []
+        pest_necrosis_pcts = []
+        biomass_indices = []
+        biomass_density_classes = []
+        biomass_kg_ha_values = []
+        mean_exg_values = []
+        all_dominant_colors = []
+
+        for analysis in analyses:
+            if not analysis.results:
+                continue
+
+            results = analysis.results
+
+            # --- Vegetation Coverage ---
+            veg_data = results.get('vegetation_coverage') or results.get('coverage')
+            if veg_data:
+                vegetation_percentages.append(veg_data.get('vegetation_percentage', 0))
+                if 'vegetation_pixels' in veg_data:
+                    vegetation_pixel_counts.append(veg_data['vegetation_pixels'])
+                if 'mean_exg' in veg_data:
+                    mean_exg_values.append(veg_data['mean_exg'])
+
+            # --- Health Index ---
+            health_data = results.get('vegetation_health') or results.get('health')
+            if health_data:
+                health_indices.append(health_data.get('health_index', 0))
+                healthy_pct = health_data.get('healthy_percentage', 0) + health_data.get('moderate_percentage', 0)
+                healthy_percentages.append(healthy_pct)
+                stressed_percentages.append(health_data.get('stressed_percentage', 0))
+                if 'mean_gli' in health_data:
+                    gli_means.append(health_data['mean_gli'])
+                if 'mean_exg' in health_data and not mean_exg_values:
+                    mean_exg_values.append(health_data['mean_exg'])
+
+            # --- Plant Health (separate from vegetation health) ---
+            plant_health_data = results.get('plant_health')
+            if plant_health_data:
+                plant_health_indices.append(plant_health_data.get('health_index', 0))
+                plant_stressed_pcts.append(plant_health_data.get('stressed_percentage', 0))
+
+            # --- Land Use ---
+            scene = results.get('scene_classification')
+            if scene and 'land_use_percentages' in scene:
+                for category, value in scene['land_use_percentages'].items():
+                    if isinstance(value, (int, float)):
+                        land_use_totals.setdefault(category, []).append(value)
+            elif 'land_use' in results:
+                for category, value in results['land_use'].items():
+                    if isinstance(value, (int, float)):
+                        land_use_totals.setdefault(category, []).append(value)
+
+            # --- Plant Count (tree_count or object_detection) ---
+            tree_data = results.get('tree_count')
+            if tree_data:
+                total_trees_sum += tree_data.get('total_trees', 0)
+                if tree_data.get('coverage_percentage') is not None:
+                    coverage_pcts.append(tree_data['coverage_percentage'])
+                if tree_data.get('avg_tree_area') is not None:
+                    avg_tree_areas.append(tree_data['avg_tree_area'])
+            elif 'object_detection' in results:
+                det = results['object_detection']
+                if det.get('by_class') and 'arvore' in det['by_class']:
+                    total_trees_sum += det['by_class']['arvore']
+                elif det.get('total_detections'):
+                    total_trees_sum += det['total_detections']
+
+            # --- Pest / Disease ---
+            pest_data = results.get('pest_disease')
+            if pest_data:
+                if pest_data.get('infection_rate') is not None:
+                    pest_infection_rates.append(pest_data['infection_rate'])
+                if pest_data.get('overall_severity'):
+                    pest_severities.append(pest_data['overall_severity'])
+                if pest_data.get('chlorosis_percentage') is not None:
+                    pest_chlorosis_pcts.append(pest_data['chlorosis_percentage'])
+                if pest_data.get('necrosis_percentage') is not None:
+                    pest_necrosis_pcts.append(pest_data['necrosis_percentage'])
+
+            # --- Biomass ---
+            biomass_data = results.get('biomass')
+            if biomass_data:
+                if biomass_data.get('biomass_index') is not None:
+                    biomass_indices.append(biomass_data['biomass_index'])
+                if biomass_data.get('density_class'):
+                    biomass_density_classes.append(biomass_data['density_class'])
+                if biomass_data.get('estimated_biomass_kg_ha') is not None:
+                    biomass_kg_ha_values.append(biomass_data['estimated_biomass_kg_ha'])
+
+            # --- Color Analysis ---
+            color_data = results.get('color_analysis')
+            if color_data and color_data.get('dominant_colors'):
+                all_dominant_colors.extend(color_data['dominant_colors'])
+
+        # Helper para média segura
+        def safe_avg(lst):
+            return round(sum(lst) / len(lst), 2) if lst else None
+
+        # Determinar severidade dominante das pragas
+        dominant_severity = None
+        if pest_severities:
+            from collections import Counter
+            severity_counts = Counter(pest_severities)
+            dominant_severity = severity_counts.most_common(1)[0][0]
+
+        # Determinar classe de densidade dominante da biomassa
+        dominant_density = None
+        if biomass_density_classes:
+            from collections import Counter
+            density_counts = Counter(biomass_density_classes)
+            dominant_density = density_counts.most_common(1)[0][0]
+
+        # Agregar cores dominantes (top 5 mais frequentes)
+        aggregated_colors = None
+        if all_dominant_colors:
+            seen = {}
+            for c in all_dominant_colors:
+                name = c.get('name') or c.get('color', 'unknown')
+                if name not in seen:
+                    seen[name] = c
+            aggregated_colors = list(seen.values())[:5]
+
+        # Média de uso do solo
+        land_use_distribution = {
+            cat: round(sum(vals) / len(vals), 2)
+            for cat, vals in land_use_totals.items()
+        } if land_use_totals else None
+
+        project_entry = {
+            "id": project.id,
+            "name": project.name,
+            "status": project.status or "pending",
+            "image_count": image_count,
+            "total_area_ha": round(project.total_area_ha, 2) if project.total_area_ha else 0.0,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            "vegetation_coverage": {
+                "percentage": safe_avg(vegetation_percentages),
+                "pixel_count": sum(vegetation_pixel_counts) if vegetation_pixel_counts else None,
+            },
+            "health_index": {
+                "health_index": safe_avg(health_indices),
+                "healthy_pct": safe_avg(healthy_percentages),
+                "stressed_pct": safe_avg(stressed_percentages),
+                "gli_mean": safe_avg(gli_means),
+            },
+            "land_use": {
+                "distribution": land_use_distribution,
+            },
+            "plant_count": {
+                "total_trees": total_trees_sum,
+                "coverage_pct": safe_avg(coverage_pcts),
+                "avg_tree_area": safe_avg(avg_tree_areas),
+            },
+            "plant_health": {
+                "health_index": safe_avg(plant_health_indices) if plant_health_indices else safe_avg(health_indices),
+                "stressed_percentage": safe_avg(plant_stressed_pcts) if plant_stressed_pcts else safe_avg(stressed_percentages),
+            },
+            "pest_disease": {
+                "infection_rate": safe_avg(pest_infection_rates),
+                "severity": dominant_severity,
+                "chlorosis_pct": safe_avg(pest_chlorosis_pcts),
+                "necrosis_pct": safe_avg(pest_necrosis_pcts),
+            },
+            "biomass": {
+                "biomass_index": safe_avg(biomass_indices),
+                "density_class": dominant_density,
+                "estimated_kg_ha": safe_avg(biomass_kg_ha_values),
+            },
+            "ndvi_exg": {
+                "mean": safe_avg(mean_exg_values),
+            },
+            "color_analysis": {
+                "dominant_colors": aggregated_colors,
+            },
+        }
+
+        projects_data.append(project_entry)
+
+    return {"projects": projects_data}
+
+
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     project_data: ProjectCreate,
@@ -719,6 +1103,7 @@ async def get_project(
         "latitude": project.latitude,
         "longitude": project.longitude,
         "total_area_ha": project.total_area_ha,
+        "perimeter_polygon": project.perimeter_polygon,
         "area_hectares": project.total_area_ha,
         "image_count": len(project.images) if project.images else 0,
         "owner_id": project.owner_id,
@@ -782,6 +1167,7 @@ async def update_project(
         "latitude": project.latitude,
         "longitude": project.longitude,
         "total_area_ha": project.total_area_ha,
+        "perimeter_polygon": project.perimeter_polygon,
         "area_hectares": project.total_area_ha,
         "image_count": len(project.images) if project.images else 0,
         "owner_id": project.owner_id,

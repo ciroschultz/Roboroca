@@ -781,3 +781,145 @@ async def delete_image(
 
     await db.delete(image)
     await db.commit()
+
+
+# ============================================
+# CAPTURE FROM COORDINATES
+# ============================================
+
+from pydantic import BaseModel, Field as PydField
+
+
+class CaptureFromCoordinatesRequest(BaseModel):
+    latitude: float = PydField(..., ge=-90, le=90)
+    longitude: float = PydField(..., ge=-180, le=180)
+    radius_m: float = PydField(default=500, ge=50, le=50000)
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+    provider: str = PydField(default="esri")
+    zoom: Optional[int] = None
+
+
+@router.post("/capture-from-coordinates")
+async def capture_from_coordinates(
+    body: CaptureFromCoordinatesRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Capturar imagem de satélite a partir de coordenadas GPS.
+
+    Busca uma imagem aérea/satélite do provedor especificado,
+    salva como imagem do projeto e retorna os dados da imagem.
+    """
+    from backend.services.external.satellite_imagery import (
+        fetch_satellite_image,
+        get_available_providers,
+    )
+
+    # Criar novo projeto para a captura GPS ou usar existente
+    if body.project_id:
+        project_result = await db.execute(
+            select(Project).where(
+                Project.id == body.project_id,
+                Project.owner_id == current_user.id,
+            )
+        )
+        project = project_result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Projeto não encontrado",
+            )
+    else:
+        # Criar novo projeto automaticamente
+        from datetime import datetime, timezone as tz
+        project_name = body.project_name or f"Captura GPS {body.latitude:.4f}, {body.longitude:.4f}"
+        project = Project(
+            name=project_name,
+            description=f"Projeto criado automaticamente via captura de satélite ({body.provider})",
+            status="pending",
+            latitude=body.latitude,
+            longitude=body.longitude,
+            owner_id=current_user.id,
+        )
+        db.add(project)
+        await db.flush()  # Gerar ID
+
+    # Buscar imagem do provedor
+    try:
+        import asyncio
+        result = await fetch_satellite_image(
+            lat=body.latitude,
+            lon=body.longitude,
+            radius_m=body.radius_m,
+            provider=body.provider,
+            upload_dir=settings.UPLOAD_DIR,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error("Erro ao capturar imagem de satélite: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Erro ao buscar imagem do provedor: {str(e)}",
+        )
+
+    # Criar registro de imagem no banco
+    image = Image(
+        filename=result["filename"],
+        original_filename=f"satellite_{body.provider}_{body.latitude:.4f}_{body.longitude:.4f}.png",
+        file_path=result["file_path"],
+        file_size=result["file_size"],
+        mime_type="image/png",
+        image_type="satellite",
+        source=result["provider"],
+        width=result["dimensions"]["width"],
+        height=result["dimensions"]["height"],
+        center_lat=body.latitude,
+        center_lon=body.longitude,
+        resolution=result["gsd_m"],
+        project_id=project.id,
+        status="uploaded",
+    )
+    db.add(image)
+
+    # Atualizar coordenadas do projeto se não definidas
+    if not project.latitude:
+        project.latitude = body.latitude
+        project.longitude = body.longitude
+
+    await db.commit()
+    await db.refresh(image)
+
+    return {
+        "id": image.id,
+        "filename": image.filename,
+        "original_filename": image.original_filename,
+        "file_size": image.file_size,
+        "image_type": image.image_type,
+        "source": image.source,
+        "width": image.width,
+        "height": image.height,
+        "center_lat": image.center_lat,
+        "center_lon": image.center_lon,
+        "gsd_m": result["gsd_m"],
+        "provider": result["provider"],
+        "bbox": result["bbox"],
+        "radius_m": result["radius_m"],
+        "project_id": image.project_id,
+        "status": image.status,
+        "message": f"Imagem capturada com sucesso via {result['provider']}",
+    }
+
+
+@router.get("/capture/providers")
+async def get_capture_providers(
+    current_user: User = Depends(get_current_user),
+):
+    """Listar provedores de imagens de satélite disponíveis."""
+    from backend.services.external.satellite_imagery import get_available_providers
+    return {"providers": get_available_providers()}

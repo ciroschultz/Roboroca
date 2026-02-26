@@ -3,7 +3,7 @@ Project model - Projetos/Fazendas/Propriedades.
 """
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 
@@ -25,6 +25,7 @@ class Project(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     total_area_ha = Column(Float, nullable=True)  # Área total em hectares
+    perimeter_polygon = Column(JSON, nullable=True)  # [[x1,y1],[x2,y2],...] normalizado (0-1)
 
     # Owner
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)

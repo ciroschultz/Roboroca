@@ -45,6 +45,8 @@ from backend.services.image_processing import (
     numpy_to_image,
     apply_roi_mask,
 )
+from backend.services.image_processing.roi_masker import create_perimeter_overlay
+from pathlib import Path
 from PIL import Image as PILImage
 import numpy as np
 
@@ -1740,33 +1742,30 @@ async def analyze_roi(
     await db.refresh(analysis)
 
     start_time = time.time()
-    tmp_path = None
 
     try:
-        # Aplicar máscara ROI
-        masked_array, roi_metadata = await asyncio.to_thread(
+        # Aplicar máscara ROI — retorna também máscara binária para ML services
+        masked_array, roi_metadata, roi_mask = await asyncio.to_thread(
             apply_roi_mask, image.file_path, body.roi_polygon
         )
 
-        # Salvar imagem mascarada em temp file
-        masked_img = PILImage.fromarray(masked_array)
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
-        os.close(tmp_fd)
-        masked_img.save(tmp_path, "JPEG", quality=90)
-
         results: dict = {"roi_metadata": roi_metadata}
 
-        # Executar análises selecionadas na imagem mascarada
+        # Executar análises na imagem ORIGINAL com roi_mask
         if "vegetation" in body.analyses:
             try:
-                basic = await asyncio.to_thread(run_basic_analysis, tmp_path)
-                results["vegetation"] = basic.get("coverage", {})
+                with PILImage.open(image.file_path) as _img:
+                    _arr = np.array(_img.convert("RGB"))
+                veg = calculate_vegetation_coverage(_arr, roi_mask=roi_mask)
+                results["vegetation"] = veg
             except Exception as e:
                 results["vegetation"] = {"error": str(e)}
 
         if "health" in body.analyses:
             try:
-                health = await asyncio.to_thread(estimate_vegetation_health, masked_array)
+                with PILImage.open(image.file_path) as _img:
+                    _arr = np.array(_img.convert("RGB"))
+                health = await asyncio.to_thread(estimate_vegetation_health, _arr)
                 results["health"] = health
             except Exception as e:
                 results["health"] = {"error": str(e)}
@@ -1774,7 +1773,9 @@ async def analyze_roi(
         if "plant_count" in body.analyses:
             try:
                 from backend.services.ml.tree_counter import count_trees_by_segmentation
-                count = await asyncio.to_thread(count_trees_by_segmentation, tmp_path)
+                count = await asyncio.to_thread(
+                    count_trees_by_segmentation, image.file_path, roi_mask=roi_mask
+                )
                 results["plant_count"] = {
                     "total_count": count["total_trees"],
                     "coverage_percentage": count["coverage_percentage"],
@@ -1785,14 +1786,18 @@ async def analyze_roi(
 
         if "pest_disease" in body.analyses and detect_pest_disease is not None:
             try:
-                pest = await asyncio.to_thread(detect_pest_disease, tmp_path)
+                pest = await asyncio.to_thread(
+                    detect_pest_disease, image.file_path, roi_mask=roi_mask
+                )
                 results["pest_disease"] = pest
             except Exception as e:
                 results["pest_disease"] = {"error": str(e)}
 
         if "biomass" in body.analyses and estimate_biomass is not None:
             try:
-                bio = await asyncio.to_thread(estimate_biomass, tmp_path)
+                bio = await asyncio.to_thread(
+                    estimate_biomass, image.file_path, roi_mask=roi_mask
+                )
                 results["biomass"] = bio
             except Exception as e:
                 results["biomass"] = {"error": str(e)}
@@ -1804,20 +1809,29 @@ async def analyze_roi(
         analysis.processing_time_seconds = round(processing_time, 2)
         analysis.completed_at = datetime.now(timezone.utc)
 
-        # Salvar imagem mascarada como imagem principal (sobrescreve original)
+        # Salvar overlay vermelho sobre a imagem principal
+        # A imagem original é mantida intacta com sombra vermelha fora do perímetro
         try:
-            masked_img.save(image.file_path, "JPEG", quality=95)
-            # Atualizar dimensões da imagem no DB se mudaram
-            if masked_img.size[0] != image.width or masked_img.size[1] != image.height:
-                image.width = masked_img.size[0]
-                image.height = masked_img.size[1]
-            # Deletar thumbnail para forçar regeneração
+            overlay_img = await asyncio.to_thread(
+                create_perimeter_overlay, image.file_path, body.roi_polygon
+            )
+            # Sobrescrever imagem principal com versão overlay (sombra vermelha fora do ROI)
+            overlay_img.save(image.file_path, "JPEG", quality=95)
+            # Também salvar cópia separada para referência
+            overlay_name = f"{Path(image.file_path).stem}_perimeter.jpg"
+            overlay_path = str(Path(image.file_path).parent / overlay_name)
+            overlay_img.save(overlay_path, "JPEG", quality=95)
+            results["perimeter_overlay_path"] = overlay_path
+            # Deletar thumbnails existentes para forçar regeneração
             thumb_dir = os.path.join(os.path.dirname(image.file_path), "thumbnails")
-            thumb_path = os.path.join(thumb_dir, os.path.basename(image.file_path))
-            if os.path.exists(thumb_path):
-                os.remove(thumb_path)
+            if os.path.exists(thumb_dir):
+                thumb_stem = os.path.splitext(image.filename)[0]
+                for suffix in [f"{thumb_stem}_thumb.jpg", os.path.basename(image.file_path)]:
+                    tp = os.path.join(thumb_dir, suffix)
+                    if os.path.exists(tp):
+                        os.remove(tp)
         except Exception as save_err:
-            logger.warning("Falha ao salvar imagem mascarada como principal: %s", save_err)
+            logger.warning("Falha ao salvar overlay do perímetro: %s", save_err)
 
         # Atualizar status do projeto para completed
         project_result = await db.execute(
@@ -1841,11 +1855,7 @@ async def analyze_roi(
             detail=f"Erro na análise ROI: {str(e)}",
         )
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
+        pass
 
 
 # ============================================

@@ -43,10 +43,14 @@ def calculate_excess_green_index(image: np.ndarray) -> np.ndarray:
     # Calcular ExG
     exg = 2 * g_norm - r_norm - b_norm
 
-    # Normalizar para 0-1
-    exg_normalized = (exg - exg.min()) / (exg.max() - exg.min() + 1e-6)
+    # Clamp para [0, 1] — só valores positivos indicam verde
+    exg_clamped = np.clip(exg, 0, 1)
 
-    return exg_normalized
+    # Zerar pixels pretos (sem informação) para não contar como vegetação
+    black_mask = (r + g + b) < 0.01
+    exg_clamped[black_mask] = 0
+
+    return exg_clamped
 
 
 def calculate_green_leaf_index(image: np.ndarray) -> np.ndarray:
@@ -81,7 +85,8 @@ def calculate_green_leaf_index(image: np.ndarray) -> np.ndarray:
 
 def calculate_vegetation_coverage(
     image: np.ndarray,
-    threshold: float = 0.3
+    threshold: float = 0.3,
+    roi_mask: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
     """
     Calcular percentual de cobertura vegetal na imagem.
@@ -89,6 +94,7 @@ def calculate_vegetation_coverage(
     Args:
         image: Array NumPy RGB (H, W, 3)
         threshold: Limiar para considerar vegetação (0-1)
+        roi_mask: Máscara binária opcional (0/1) delimitando a região de interesse
 
     Returns:
         Dicionário com estatísticas de cobertura
@@ -98,16 +104,21 @@ def calculate_vegetation_coverage(
     # Criar máscara de vegetação
     vegetation_mask = exg > threshold
 
-    total_pixels = exg.size
-    vegetation_pixels = vegetation_mask.sum()
+    if roi_mask is not None:
+        vegetation_mask = vegetation_mask & (roi_mask > 0)
+        total_pixels = int(roi_mask.sum())
+    else:
+        total_pixels = exg.size
 
-    coverage_percentage = (vegetation_pixels / total_pixels) * 100
+    vegetation_pixels = int(vegetation_mask.sum())
+
+    coverage_percentage = (vegetation_pixels / total_pixels) * 100 if total_pixels > 0 else 0
 
     return {
         'vegetation_percentage': round(coverage_percentage, 2),
         'non_vegetation_percentage': round(100 - coverage_percentage, 2),
-        'total_pixels': int(total_pixels),
-        'vegetation_pixels': int(vegetation_pixels),
+        'total_pixels': total_pixels,
+        'vegetation_pixels': vegetation_pixels,
         'threshold_used': threshold,
     }
 

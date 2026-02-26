@@ -260,6 +260,7 @@ export interface Project {
   latitude?: number
   longitude?: number
   total_area_ha?: number
+  perimeter_polygon?: number[][]
   area_hectares?: number
   image_count: number
   status: string
@@ -273,6 +274,17 @@ export interface CreateProjectData {
   latitude?: number
   longitude?: number
   area_hectares?: number
+  perimeter_polygon?: number[][]
+}
+
+/**
+ * Salvar perímetro do projeto
+ */
+export async function saveProjectPerimeter(
+  projectId: number,
+  polygon: number[][]
+): Promise<Project> {
+  return updateProject(projectId, { perimeter_polygon: polygon } as any)
 }
 
 /**
@@ -512,6 +524,36 @@ export async function getImageClusters(projectId: number, radiusM = 50): Promise
 }
 
 // ============================================
+// SATELLITE IMAGE CAPTURE - Captura por GPS
+// ============================================
+
+export interface CaptureFromCoordinatesData {
+  latitude: number
+  longitude: number
+  radius_m?: number
+  project_id?: number
+  project_name?: string
+  provider?: string
+}
+
+/**
+ * Capturar imagem de satélite a partir de coordenadas GPS
+ */
+export async function captureFromCoordinates(data: CaptureFromCoordinatesData): Promise<any> {
+  return apiRequest('/images/capture-from-coordinates', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Listar provedores de imagens de satélite disponíveis
+ */
+export async function getCaptureProviders(): Promise<{ providers: any[] }> {
+  return apiRequest('/images/capture/providers')
+}
+
+// ============================================
 // ANALYSIS - Análises
 // ============================================
 
@@ -562,15 +604,32 @@ export async function analyzeVegetation(imageId: number, threshold = 0.3): Promi
 /**
  * Executar análise NDVI (Índice ExG) em uma imagem
  */
-export async function analyzeNDVI(imageId: number, threshold = 0.3): Promise<Analysis> {
-  return apiRequest(`/analysis/ndvi/${imageId}?threshold=${threshold}`, { method: 'POST' })
+export async function analyzeNDVI(imageId: number, threshold?: number): Promise<Analysis> {
+  const body: Record<string, unknown> = {}
+  if (threshold !== undefined) {
+    body.threshold = threshold
+  }
+  return apiRequest(`/analysis/ndvi/${imageId}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 /**
  * Executar contagem de plantas em uma imagem
  */
-export async function analyzePlantCount(imageId: number, minArea = 50, maxArea = 15000): Promise<Analysis> {
-  return apiRequest(`/analysis/plant-count/${imageId}?min_area=${minArea}&max_area=${maxArea}`, { method: 'POST' })
+export async function analyzePlantCount(imageId: number, minArea?: number, maxArea?: number): Promise<Analysis> {
+  const body: Record<string, unknown> = {}
+  if (minArea !== undefined) {
+    body.min_tree_area = minArea
+  }
+  if (maxArea !== undefined) {
+    body.max_tree_area = maxArea
+  }
+  return apiRequest(`/analysis/plant-count/${imageId}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 /**
@@ -1044,6 +1103,13 @@ export async function getProjectsComparison(): Promise<{
   }>
 }> {
   return apiRequest('/projects/comparison')
+}
+
+/**
+ * Obter comparação detalhada entre projetos (todas as métricas)
+ */
+export async function getDetailedComparison(): Promise<any> {
+  return apiRequest('/projects/comparison/detailed')
 }
 
 // ============================================

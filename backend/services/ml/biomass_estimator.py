@@ -230,6 +230,7 @@ def _generate_recommendations(
 def estimate_biomass(
     image_path: str,
     min_canopy_area: int = 50,
+    roi_mask: np.ndarray = None,
 ) -> Dict[str, Any]:
     """
     Estimar biomassa vegetal em uma imagem aerea.
@@ -255,7 +256,18 @@ def estimate_biomass(
 
         image = np.array(img)
 
-    total_pixels = image.shape[0] * image.shape[1]
+    # Aplicar máscara ROI se fornecida
+    if roi_mask is not None:
+        mask_resized = cv2.resize(
+            roi_mask.astype(np.uint8),
+            (image.shape[1], image.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        image = image * mask_resized[:, :, np.newaxis]
+        # Total de pixels = apenas os dentro do ROI
+        total_pixels = int(mask_resized.sum())
+    else:
+        total_pixels = image.shape[0] * image.shape[1]
 
     # 1. Mascara de vegetacao (ExG)
     vegetation_mask, exg_values = _compute_exg_mask(image)

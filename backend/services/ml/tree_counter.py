@@ -15,7 +15,8 @@ def count_trees_by_segmentation(
     exg_threshold: float = None,  # None = auto-calculate
     min_tree_area: int = 50,
     max_tree_area: int = 15000,
-    kernel_size: int = 5
+    kernel_size: int = 5,
+    roi_mask: np.ndarray = None,
 ) -> Dict[str, Any]:
     """
     Contar árvores/plantas em imagem aérea usando segmentação de vegetação.
@@ -53,6 +54,16 @@ def count_trees_by_segmentation(
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
         image_array = np.array(img)
+
+    # Aplicar máscara ROI se fornecida (zerar pixels fora do perímetro)
+    if roi_mask is not None:
+        # Redimensionar máscara para o tamanho da imagem processada
+        mask_resized = cv2.resize(
+            roi_mask.astype(np.uint8),
+            (image_array.shape[1], image_array.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        image_array = image_array * mask_resized[:, :, np.newaxis]
 
     # Converter para float e normalizar
     img_float = image_array.astype(np.float32) / 255.0

@@ -27,6 +27,9 @@ class ProjectUpdate(BaseModel):
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
     total_area_ha: Optional[float] = Field(None, ge=0)
+    perimeter_polygon: Optional[List[List[float]]] = Field(
+        None, description="Polígono do perímetro [[x1,y1],[x2,y2],...] normalizado (0-1)"
+    )
 
 
 # --- Response Schemas ---
@@ -41,6 +44,7 @@ class ProjectResponse(BaseModel):
     latitude: Optional[float]
     longitude: Optional[float]
     total_area_ha: Optional[float]
+    perimeter_polygon: Optional[List[List[float]]] = None
     area_hectares: Optional[float] = None  # Alias para compatibilidade
     image_count: int = 0
     owner_id: int
