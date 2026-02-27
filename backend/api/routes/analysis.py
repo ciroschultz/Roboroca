@@ -1821,12 +1821,15 @@ async def analyze_roi(
 
         results: dict = {"roi_metadata": roi_metadata}
 
+        # Threshold adaptativo: satélite usa threshold mais baixo
+        veg_threshold = 0.2 if (image.image_type or "drone") == "satellite" else 0.3
+
         # Executar análises na imagem ORIGINAL com roi_mask
         if "vegetation" in body.analyses:
             try:
                 with PILImage.open(image.file_path) as _img:
                     _arr = np.array(_img.convert("RGB"))
-                veg = calculate_vegetation_coverage(_arr, roi_mask=roi_mask)
+                veg = calculate_vegetation_coverage(_arr, threshold=veg_threshold, roi_mask=roi_mask)
                 results["vegetation"] = veg
             except Exception as e:
                 results["vegetation"] = {"error": str(e)}
@@ -1844,7 +1847,7 @@ async def analyze_roi(
             try:
                 from backend.services.ml.tree_counter import count_trees_by_segmentation
                 count = await asyncio.to_thread(
-                    count_trees_by_segmentation, image.file_path, roi_mask=roi_mask
+                    count_trees_by_segmentation, image.file_path, roi_mask=roi_mask, image_type=image.image_type or "drone"
                 )
                 results["plant_count"] = {
                     "total_count": count["total_trees"],

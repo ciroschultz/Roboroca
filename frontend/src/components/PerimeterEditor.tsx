@@ -51,6 +51,7 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
 
   // Per-image perimeter storage: imageId → points
   const [perimeterMap, setPerimeterMap] = useState<Record<number, Point[]>>({})
+  const perimeterMapRef = useRef<Record<number, Point[]>>({})
   const [videoCount, setVideoCount] = useState(0)
 
   // Drawing state (for current image)
@@ -101,10 +102,12 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     load()
   }, [projectId])
 
-  // Save current perimeter before switching images
+  // Save current perimeter before switching images (uses ref for immediate sync)
   const saveCurrentPerimeter = useCallback(() => {
     if (selectedImage && points.length >= 3 && closed) {
-      setPerimeterMap(prev => ({ ...prev, [selectedImage.id]: points }))
+      const updated = { ...perimeterMapRef.current, [selectedImage.id]: points }
+      perimeterMapRef.current = updated
+      setPerimeterMap(updated)
     }
   }, [selectedImage, points, closed])
 
@@ -121,8 +124,8 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     if (!selectedImage) return
     setImageLoading(true)
     setImageBitmap(null)
-    // Restore saved perimeter or reset
-    const savedPoints = perimeterMap[selectedImage.id]
+    // Restore saved perimeter or reset (use ref for immediate access)
+    const savedPoints = perimeterMapRef.current[selectedImage.id]
     if (savedPoints && savedPoints.length >= 3) {
       setPoints(savedPoints)
       setClosed(true)
@@ -378,8 +381,8 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     // Save current image's perimeter first
     saveCurrentPerimeter()
 
-    // Collect all perimeters (current + saved)
-    const allPerimeters: Record<number, Point[]> = { ...perimeterMap }
+    // Collect all perimeters (current + saved via ref for immediate access)
+    const allPerimeters: Record<number, Point[]> = { ...perimeterMapRef.current }
     if (selectedImage && points.length >= 3 && closed) {
       allPerimeters[selectedImage.id] = points
     }
@@ -439,9 +442,9 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
         )
       }
 
-      // 2. Full ML pipeline
+      // 2. Full ML pipeline (force=true when videos exist to ensure they get analyzed)
       await runStep('Pipeline ML completo (segmentação, classificação, detecção)...', () =>
-        analyzeProject(projectId)
+        analyzeProject(projectId, videoCount > 0)
       )
 
       // 3. Poll until the background analysis finishes
