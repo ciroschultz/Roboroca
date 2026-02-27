@@ -200,7 +200,10 @@ def analyze_image_colors(image: np.ndarray) -> Dict[str, Any]:
     }
 
 
-def estimate_vegetation_health(image: np.ndarray) -> Dict[str, Any]:
+def estimate_vegetation_health(
+    image: np.ndarray,
+    roi_mask: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
     """
     Estimar saúde da vegetação baseado em análise de cores.
     Nota: Esta é uma estimativa simplificada para imagens RGB.
@@ -208,6 +211,7 @@ def estimate_vegetation_health(image: np.ndarray) -> Dict[str, Any]:
 
     Args:
         image: Array NumPy RGB (H, W, 3)
+        roi_mask: Máscara binária opcional (0/1) delimitando a região de interesse
 
     Returns:
         Estimativa de saúde da vegetação
@@ -216,13 +220,24 @@ def estimate_vegetation_health(image: np.ndarray) -> Dict[str, Any]:
     exg = calculate_excess_green_index(image)
     gli = calculate_green_leaf_index(image)
 
-    # Criar máscaras de vegetação com diferentes níveis
-    healthy_mask = exg > 0.5  # Vegetação muito verde
-    moderate_mask = (exg > 0.25) & (exg <= 0.5)  # Vegetação moderada
-    stressed_mask = (exg > 0.1) & (exg <= 0.25)  # Vegetação com estresse
-    non_veg_mask = exg <= 0.1  # Não vegetação
+    # Restringir ao ROI se fornecido
+    if roi_mask is not None:
+        roi = roi_mask > 0
+        # Criar máscaras de vegetação com diferentes níveis (apenas dentro do ROI)
+        healthy_mask = (exg > 0.5) & roi
+        moderate_mask = (exg > 0.25) & (exg <= 0.5) & roi
+        stressed_mask = (exg > 0.1) & (exg <= 0.25) & roi
+        non_veg_mask = (exg <= 0.1) & roi
+        total = int(roi.sum())
+    else:
+        healthy_mask = exg > 0.5
+        moderate_mask = (exg > 0.25) & (exg <= 0.5)
+        stressed_mask = (exg > 0.1) & (exg <= 0.25)
+        non_veg_mask = exg <= 0.1
+        total = exg.size
 
-    total = exg.size
+    if total == 0:
+        total = 1
 
     # Calcular percentuais
     healthy_pct = (healthy_mask.sum() / total) * 100
@@ -240,6 +255,15 @@ def estimate_vegetation_health(image: np.ndarray) -> Dict[str, Any]:
     else:
         health_index = 0
 
+    # Calcular médias apenas dentro do ROI
+    if roi_mask is not None:
+        roi_pixels = roi_mask > 0
+        mean_exg = float(exg[roi_pixels].mean()) if roi_pixels.any() else 0.0
+        mean_gli = float(gli[roi_pixels].mean()) if roi_pixels.any() else 0.0
+    else:
+        mean_exg = float(exg.mean())
+        mean_gli = float(gli.mean())
+
     return {
         'health_index': round(health_index, 1),
         'healthy_percentage': round(healthy_pct, 1),
@@ -247,8 +271,8 @@ def estimate_vegetation_health(image: np.ndarray) -> Dict[str, Any]:
         'stressed_percentage': round(stressed_pct, 1),
         'non_vegetation_percentage': round(non_veg_pct, 1),
         'vegetation_total_percentage': round(vegetation_total, 1),
-        'mean_exg': round(float(exg.mean()), 3),
-        'mean_gli': round(float(gli.mean()), 3),
+        'mean_exg': round(mean_exg, 3),
+        'mean_gli': round(mean_gli, 3),
     }
 
 
@@ -295,12 +319,18 @@ def generate_vegetation_heatmap(
     return heatmap
 
 
-def run_basic_analysis(image_path: str) -> Dict[str, Any]:
+def run_basic_analysis(
+    image_path: str,
+    roi_mask: Optional[np.ndarray] = None,
+    threshold: float = 0.3,
+) -> Dict[str, Any]:
     """
     Executar análise básica completa de uma imagem.
 
     Args:
         image_path: Caminho para a imagem
+        roi_mask: Máscara binária opcional (0/1) delimitando a região de interesse
+        threshold: Limiar de vegetação (0.2 para satélite, 0.3 para drone)
 
     Returns:
         Dicionário com todos os resultados da análise
@@ -311,9 +341,9 @@ def run_basic_analysis(image_path: str) -> Dict[str, Any]:
             img = img.convert('RGB')
         image_array = np.array(img)
 
-    # Executar análises
-    coverage = calculate_vegetation_coverage(image_array)
-    health = estimate_vegetation_health(image_array)
+    # Executar análises (restrita ao ROI se fornecido)
+    coverage = calculate_vegetation_coverage(image_array, threshold=threshold, roi_mask=roi_mask)
+    health = estimate_vegetation_health(image_array, roi_mask=roi_mask)
     colors = analyze_image_colors(image_array)
     histogram = calculate_color_histogram(image_array)
 

@@ -39,6 +39,9 @@ class Image(Base):
     # Bandas disponíveis
     bands = Column(JSON, nullable=True)  # ["R", "G", "B", "NIR", ...]
 
+    # Perímetro da região de interesse (normalizado 0-1, por imagem)
+    perimeter_polygon = Column(JSON, nullable=True)  # [[x, y], ...] normalizado
+
     # Data da captura
     capture_date = Column(DateTime, nullable=True)
 

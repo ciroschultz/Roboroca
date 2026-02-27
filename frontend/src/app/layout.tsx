@@ -32,6 +32,25 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
+      <head>
+        {/* Forçar remoção de service worker antigo que bloqueia carregamento */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                  registrations.forEach(function(reg) { reg.unregister(); });
+                });
+                if ('caches' in window) {
+                  caches.keys().then(function(names) {
+                    names.forEach(function(name) { caches.delete(name); });
+                  });
+                }
+              }
+            `,
+          }}
+        />
+      </head>
       <body className="bg-[#0f0f1a] text-white min-h-screen antialiased">
         <Providers>
           {children}

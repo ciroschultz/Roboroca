@@ -491,6 +491,19 @@ export async function getImageMetadata(imageId: number): Promise<Record<string, 
 }
 
 /**
+ * Salvar perímetro (polígono normalizado 0-1) de uma imagem específica
+ */
+export async function saveImagePerimeter(
+  imageId: number,
+  polygon: number[][]
+): Promise<{ image_id: number; perimeter_polygon: number[][]; message: string }> {
+  return apiRequest(`/images/${imageId}/perimeter`, {
+    method: 'PUT',
+    body: JSON.stringify({ perimeter_polygon: polygon }),
+  })
+}
+
+/**
  * Excluir imagem
  */
 export async function deleteImage(id: number): Promise<void> {
@@ -691,8 +704,9 @@ export async function deleteAnalysis(id: number): Promise<void> {
 /**
  * Disparar análise em todas as imagens de um projeto
  */
-export async function analyzeProject(projectId: number): Promise<{ message: string; analyses_started: number }> {
-  return apiRequest(`/projects/${projectId}/analyze`, { method: 'POST' })
+export async function analyzeProject(projectId: number, force = false): Promise<{ message: string; analyses_started: number }> {
+  const params = force ? '?force=true' : ''
+  return apiRequest(`/projects/${projectId}/analyze${params}`, { method: 'POST' })
 }
 
 /**

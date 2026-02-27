@@ -202,6 +202,9 @@ export default function MapView({ projectId }: MapViewProps) {
   const [roiAnalyzing, setRoiAnalyzing] = useState(false)
   const [roiAnalyses, setRoiAnalyses] = useState<string[]>(['vegetation', 'health', 'plant_count'])
 
+  // Original image toggle
+  const [showOriginalImage, setShowOriginalImage] = useState(false)
+
   // Project analysis
   const [analyzingProject, setAnalyzingProject] = useState(false)
 
@@ -800,20 +803,25 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }, [selectedProject, projectImages, selectedImageIndex])
 
-  // Load image with authentication (try thumbnail first, fallback to full file)
-  const loadImage = useCallback(async (image: ProjectImage) => {
+  // Load image with authentication
+  // useOriginal=false (default): loads overlay image via /file endpoint
+  // useOriginal=true: loads original image (without overlay) via /original endpoint
+  const loadImage = useCallback(async (image: ProjectImage, useOriginal = false) => {
     const token = getAuthToken()
     if (!token) return
 
     setImageLoading(true)
     try {
-      // Try thumbnail first
-      let response = await fetch(`${API_BASE_URL}/images/${image.id}/thumbnail`, {
+      const endpoint = useOriginal
+        ? `${API_BASE_URL}/images/${image.id}/original`
+        : `${API_BASE_URL}/images/${image.id}/file`
+
+      let response = await fetch(endpoint, {
         headers: { 'Authorization': `Bearer ${token}` },
       })
 
-      // Fallback to full file if thumbnail fails
-      if (!response.ok) {
+      // Fallback: if /original fails, try /file
+      if (!response.ok && useOriginal) {
         response = await fetch(`${API_BASE_URL}/images/${image.id}/file`, {
           headers: { 'Authorization': `Bearer ${token}` },
         })
@@ -840,11 +848,18 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }, [])
 
+  // Reload image when showOriginalImage toggles
+  useEffect(() => {
+    if (projectImages.length > 0 && selectedImageIndex >= 0) {
+      loadImage(projectImages[selectedImageIndex], showOriginalImage)
+    }
+  }, [showOriginalImage])
+
   // Load image when selected
   useEffect(() => {
     if (projectImages.length > 0 && selectedImageIndex >= 0) {
       const imgId = projectImages[selectedImageIndex].id
-      loadImage(projectImages[selectedImageIndex])
+      loadImage(projectImages[selectedImageIndex], showOriginalImage)
       fetchImageAnalysis(imgId)
       fetchAnnotations(imgId)
       fetchImageGSD(imgId)
@@ -1513,32 +1528,46 @@ export default function MapView({ projectId }: MapViewProps) {
                         const imgW = projectImages[selectedImageIndex].width!
                         const imgH = projectImages[selectedImageIndex].height!
                         const perimLayer = layers.find(l => l.type === 'roi')!
+                        const perimPts = selectedProject.perimeter_polygon!
                         return (
                           <>
-                            {/* Sombra vermelha fora do perímetro */}
+                            {/* Sombra escura FORA do perímetro */}
                             <defs>
                               <mask id="perimeter-mask">
                                 <rect x="0" y="0" width={imgW} height={imgH} fill="white" />
                                 <polygon
-                                  points={selectedProject.perimeter_polygon!.map(p => `${p[0] * imgW},${p[1] * imgH}`).join(' ')}
+                                  points={perimPts.map(p => `${p[0] * imgW},${p[1] * imgH}`).join(' ')}
                                   fill="black"
                                 />
                               </mask>
                             </defs>
                             <rect
                               x="0" y="0" width={imgW} height={imgH}
-                              fill="rgba(255, 50, 50, 0.15)"
+                              fill="rgba(0, 0, 0, 0.45)"
                               mask="url(#perimeter-mask)"
                               opacity={perimLayer.opacity / 100}
                             />
-                            {/* Contorno do perímetro */}
+                            {/* Contorno vermelho do perímetro */}
                             <polygon
-                              points={selectedProject.perimeter_polygon!.map(p => `${p[0] * imgW},${p[1] * imgH}`).join(' ')}
+                              points={perimPts.map(p => `${p[0] * imgW},${p[1] * imgH}`).join(' ')}
                               fill="none"
-                              stroke="rgba(255, 50, 50, 0.7)"
-                              strokeWidth={2}
+                              stroke="rgba(220, 60, 60, 0.9)"
+                              strokeWidth={3}
                               opacity={perimLayer.opacity / 100}
                             />
+                            {/* Bolinhas brancas nos vértices */}
+                            {perimPts.map((p, i) => (
+                              <circle
+                                key={`vertex-${i}`}
+                                cx={p[0] * imgW}
+                                cy={p[1] * imgH}
+                                r={6}
+                                fill="white"
+                                stroke="rgba(220, 60, 60, 0.9)"
+                                strokeWidth={2}
+                                opacity={perimLayer.opacity / 100}
+                              />
+                            ))}
                           </>
                         )
                       })()}
@@ -1931,6 +1960,19 @@ export default function MapView({ projectId }: MapViewProps) {
                     <Layers size={16} className="text-gray-400" />
                   </button>
                 </div>
+
+                {/* Toggle imagem original vs overlay */}
+                <button
+                  onClick={() => setShowOriginalImage(!showOriginalImage)}
+                  className={`w-full mb-3 flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    showOriginalImage
+                      ? 'bg-blue-600/20 border border-blue-500/40 text-blue-400'
+                      : 'bg-gray-800/50 border border-gray-700/50 text-gray-400 hover:bg-gray-700/50'
+                  }`}
+                >
+                  <ImageIcon size={14} />
+                  {showOriginalImage ? 'Ver com Perimetro' : 'Ver Original (sem overlay)'}
+                </button>
 
                 <div className="space-y-2">
                   {layers.map(layer => {

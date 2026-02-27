@@ -21,7 +21,7 @@ import {
   analyzeROI,
   analyzeProject,
   getProjectAnalysisSummary,
-  saveProjectPerimeter,
+  saveImagePerimeter,
   type ImageData,
 } from '@/lib/api'
 import { useToast } from './Toast'
@@ -51,6 +51,7 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
 
   // Per-image perimeter storage: imageId → points
   const [perimeterMap, setPerimeterMap] = useState<Record<number, Point[]>>({})
+  const [videoCount, setVideoCount] = useState(0)
 
   // Drawing state (for current image)
   const [drawing, setDrawing] = useState(false)
@@ -79,12 +80,20 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
 
   const selectedImage = images[selectedImageIdx] || null
 
-  // Load project images
+  const VIDEO_EXTENSIONS = ['.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv']
+  const isVideoFile = (filename: string) => {
+    const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'))
+    return VIDEO_EXTENSIONS.includes(ext)
+  }
+
+  // Load project images (filter out videos — they don't need perimeters)
   useEffect(() => {
     const load = async () => {
       try {
         const data = await getImages(projectId, 0, 100)
-        setImages(data.images)
+        const videos = data.images.filter(img => isVideoFile(img.original_filename))
+        setVideoCount(videos.length)
+        setImages(data.images.filter(img => !isVideoFile(img.original_filename)))
       } catch {
         toast.error('Erro', 'Não foi possível carregar imagens do projeto')
       }
@@ -215,19 +224,22 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
 
     // Draw filled polygon if closed
     if (closed) {
-      // Red overlay inside the polygon (toggleable)
+      // Dark shadow OUTSIDE the polygon (toggleable)
       if (showOverlay) {
+        ctx.save()
         ctx.beginPath()
+        ctx.rect(0, 0, canvas.width, canvas.height)
         ctx.moveTo(screenPts[0].x, screenPts[0].y)
-        for (let i = 1; i < screenPts.length; i++) {
+        for (let i = screenPts.length - 1; i >= 0; i--) {
           ctx.lineTo(screenPts[i].x, screenPts[i].y)
         }
         ctx.closePath()
-        ctx.fillStyle = 'rgba(220, 60, 60, 0.20)'
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
         ctx.fill()
+        ctx.restore()
       }
 
-      // Border always visible
+      // Red border always visible
       ctx.beginPath()
       ctx.moveTo(screenPts[0].x, screenPts[0].y)
       for (let i = 1; i < screenPts.length; i++) {
@@ -375,8 +387,8 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     setAnalyzing(true)
     setProgressStep(0)
 
-    // Total steps: 1 (save perimeter) + N images (ROI) + 1 (ML pipeline) + 1 (polling)
-    const totalSteps = 1 + images.length + 1 + 1
+    // Total steps: N (save perimeters) + N images (ROI) + 1 (ML pipeline) + 1 (polling)
+    const totalSteps = images.length + images.length + 1 + 1
     setProgressTotal(totalSteps)
 
     let currentStep = 0
@@ -395,17 +407,20 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     }
 
     try {
-      // 0. Salvar perímetro normalizado da primeira imagem no projeto
-      const firstImg = images[0]
-      const firstPerimeter = allPerimeters[firstImg.id]
-      let normalizedPolygon: number[][] | null = null
-      if (firstPerimeter && firstImg.width && firstImg.height) {
-        normalizedPolygon = firstPerimeter.map(p => [
-          p.x / firstImg.width!,
-          p.y / firstImg.height!,
+      // 0. Salvar perímetro normalizado de CADA imagem individualmente
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i]
+        const imgPerimeter = allPerimeters[img.id]
+        if (!imgPerimeter || imgPerimeter.length < 3) continue
+        if (!img.width || !img.height) continue
+
+        const normalizedPolygon = imgPerimeter.map(p => [
+          p.x / img.width!,
+          p.y / img.height!,
         ])
-        await runStep('Salvando perímetro do projeto...', () =>
-          saveProjectPerimeter(projectId, normalizedPolygon!)
+        await runStep(
+          `Salvando perímetro da imagem ${i + 1}/${images.length}...`,
+          () => saveImagePerimeter(img.id, normalizedPolygon)
         )
       }
 
@@ -472,19 +487,21 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     // Draw original image
     ctx.drawImage(imageBitmap, 0, 0)
 
-    // Draw polygon overlay
-    if (showOverlay) {
-      ctx.beginPath()
-      ctx.moveTo(points[0].x, points[0].y)
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y)
-      }
-      ctx.closePath()
-      ctx.fillStyle = 'rgba(220, 60, 60, 0.20)'
-      ctx.fill()
+    // Dark shadow OUTSIDE the perimeter (inside stays intact)
+    ctx.save()
+    // Draw full canvas rect, then cut out the polygon => fills only outside
+    ctx.beginPath()
+    ctx.rect(0, 0, saveCanvas.width, saveCanvas.height)
+    ctx.moveTo(points[0].x, points[0].y)
+    for (let i = points.length - 1; i >= 0; i--) {
+      ctx.lineTo(points[i].x, points[i].y)
     }
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
+    ctx.fill()
+    ctx.restore()
 
-    // Draw border
+    // Draw red border
     ctx.beginPath()
     ctx.moveTo(points[0].x, points[0].y)
     for (let i = 1; i < points.length; i++) {
@@ -495,11 +512,11 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     ctx.lineWidth = 3
     ctx.stroke()
 
-    // Draw vertex dots
-    points.forEach((p, i) => {
+    // Draw white vertex dots with red border
+    points.forEach((p) => {
       ctx.beginPath()
       ctx.arc(p.x, p.y, 6, 0, Math.PI * 2)
-      ctx.fillStyle = i === 0 ? '#dc3c3c' : '#ffffff'
+      ctx.fillStyle = '#ffffff'
       ctx.fill()
       ctx.strokeStyle = '#dc3c3c'
       ctx.lineWidth = 2
@@ -563,6 +580,11 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
         {/* Image thumbnails sidebar (if multiple images) */}
         {images.length > 1 && (
           <div className="w-24 bg-gray-900 border-r border-gray-800 overflow-y-auto shrink-0 p-2 flex flex-col gap-2">
+            {videoCount > 0 && (
+              <div className="text-[10px] text-blue-400 text-center mb-1 px-1">
+                {videoCount} video(s) analisado(s) automaticamente
+              </div>
+            )}
             <div className="text-[10px] text-gray-500 text-center mb-1">
               {imagesWithPerimeter}/{images.length} delimitadas
             </div>
@@ -608,8 +630,12 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
               <Loader2 size={32} className="animate-spin text-green-500" />
             </div>
           ) : !imageBitmap ? (
-            <div className="absolute inset-0 flex items-center justify-center text-gray-500">
-              {images.length === 0 ? 'Nenhuma imagem encontrada no projeto' : 'Selecione uma imagem'}
+            <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-center px-8">
+              {images.length === 0 && videoCount > 0
+                ? `Este projeto contém apenas ${videoCount} vídeo(s). Vídeos são analisados automaticamente sem perímetro. Clique "Analisar" abaixo.`
+                : images.length === 0
+                ? 'Nenhuma imagem encontrada no projeto'
+                : 'Selecione uma imagem'}
             </div>
           ) : null}
 
@@ -695,15 +721,19 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
             </button>
           </div>
 
-          {/* Analyze button — only when ALL images have perimeters */}
-          {closed && !analyzing && (images.length === 1 || allPerimetersDefined) && (
+          {/* Analyze button — when ALL images have perimeters, or project is video-only */}
+          {((closed && !analyzing && (images.length === 1 || allPerimetersDefined)) || (images.length === 0 && videoCount > 0 && !analyzing)) && (
             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10">
               <button
                 onClick={handleAnalyze}
                 className="flex items-center gap-3 px-8 py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl text-lg font-semibold shadow-2xl transition-all hover:scale-105"
               >
                 <Play size={22} />
-                Analisar {images.length > 1 ? `${images.length} Imagens` : 'Área Delimitada'}
+                {images.length === 0 && videoCount > 0
+                  ? `Analisar ${videoCount} Vídeo(s)`
+                  : images.length > 1
+                  ? `Analisar ${images.length} Imagens`
+                  : 'Analisar Área Delimitada'}
               </button>
             </div>
           )}

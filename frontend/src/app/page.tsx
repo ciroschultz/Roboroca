@@ -472,12 +472,12 @@ export default function Home() {
 
     setIsCreatingProject(false)
 
-    // Encontrar o projeto recém-criado e abrir o editor de perímetro
+    // Encontrar o projeto recém-criado e abrir o editor de perímetro (só se não completed)
     const newProject = loadedProjects.find(p => p.id === String(projectId))
     if (newProject) {
       setSelectedProject(newProject)
       setProjectInitialTab('overview')
-      setOpenPerimeter(true)
+      setOpenPerimeter(newProject.status !== 'completed')
       setActiveView('project-detail')
     } else {
       // Fallback: ir para projetos

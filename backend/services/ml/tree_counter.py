@@ -17,6 +17,7 @@ def count_trees_by_segmentation(
     max_tree_area: int = 15000,
     kernel_size: int = 5,
     roi_mask: np.ndarray = None,
+    image_type: str = "drone",
 ) -> Dict[str, Any]:
     """
     Contar árvores/plantas em imagem aérea usando segmentação de vegetação.
@@ -36,10 +37,16 @@ def count_trees_by_segmentation(
         min_tree_area: Área mínima em pixels para considerar como árvore
         max_tree_area: Área máxima em pixels (evita contar áreas muito grandes)
         kernel_size: Tamanho do kernel para operações morfológicas
+        image_type: "drone" ou "satellite" — ajusta thresholds automaticamente
 
     Returns:
         Dicionário com contagem e estatísticas das árvores
     """
+    # Thresholds adaptativos para satélite (~1m/pixel vs drone ~3cm/pixel)
+    if image_type == "satellite":
+        min_tree_area = 8       # árvore pequena ~3x3 pixels a 1m/pixel
+        max_tree_area = 50000   # grupos de árvores grandes
+        kernel_size = 3         # erosão menor para não destruir árvores pequenas
     # Carregar imagem
     with Image.open(image_path) as img:
         if img.mode != 'RGB':
@@ -79,8 +86,12 @@ def count_trees_by_segmentation(
     # Usa percentil 70 do ExG para detectar apenas as áreas mais verdes (copas de árvores)
     if exg_threshold is None:
         exg_threshold = np.percentile(exg, 70)
-        # Garantir que threshold está em faixa razoável
-        exg_threshold = max(0.5, min(0.7, exg_threshold))
+        if image_type == "satellite":
+            # Faixa mais permissiva para satélite (pixels mistos, resolução menor)
+            exg_threshold = max(0.3, min(0.55, exg_threshold))
+        else:
+            # Faixa padrão para drone (alta resolução)
+            exg_threshold = max(0.5, min(0.7, exg_threshold))
 
     # Criar máscara de vegetação
     vegetation_mask = (exg > exg_threshold).astype(np.uint8) * 255
@@ -88,8 +99,9 @@ def count_trees_by_segmentation(
     # Operações morfológicas para separar árvores individuais
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
 
-    # Erosão para separar árvores conectadas
-    eroded = cv2.erode(vegetation_mask, kernel, iterations=2)
+    # Erosão para separar árvores conectadas (menos agressiva para satélite)
+    erosion_iters = 1 if image_type == "satellite" else 2
+    eroded = cv2.erode(vegetation_mask, kernel, iterations=erosion_iters)
 
     # Dilatação para restaurar tamanho aproximado
     processed = cv2.dilate(eroded, kernel, iterations=1)
@@ -152,7 +164,11 @@ def count_trees_by_segmentation(
     with Image.open(image_path) as img:
         original_width, original_height = img.size
 
-    total_pixels = original_width * original_height
+    # Usar total de pixels do ROI se fornecido, caso contrário imagem inteira
+    if roi_mask is not None:
+        total_pixels = int(roi_mask.sum())
+    else:
+        total_pixels = original_width * original_height
     coverage_percentage = (total_tree_area / total_pixels) * 100 if total_pixels > 0 else 0
 
     return {
@@ -171,5 +187,6 @@ def count_trees_by_segmentation(
             'exg_threshold': float(exg_threshold),  # Converter np.float32 para float Python
             'min_tree_area': int(min_tree_area),
             'max_tree_area': int(max_tree_area),
+            'image_type': image_type,
         }
     }

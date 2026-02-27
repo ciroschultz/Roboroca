@@ -99,18 +99,21 @@ def apply_roi_mask(
 def create_perimeter_overlay(
     image_path: str,
     polygon_points: list[list[float]],
-    alpha: float = 0.3,
-    color: tuple[int, int, int] = (255, 50, 50),
+    shadow_alpha: float = 0.45,
+    border_color: tuple[int, int, int] = (255, 60, 60),
+    vertex_radius: int = 6,
 ) -> Image.Image:
     """
-    Cria cópia da imagem com sombra vermelha fora do ROI.
-    A imagem original fica intacta.
+    Cria cópia da imagem com sombra escura FORA do perímetro,
+    contorno vermelho e bolinhas brancas nos vértices.
+    A área DENTRO do perímetro fica intacta.
 
     Args:
         image_path: Caminho para o arquivo de imagem.
         polygon_points: Lista de pontos [[x1,y1], [x2,y2], ...] em coordenadas de pixel.
-        alpha: Opacidade da sombra (0-1).
-        color: Cor RGB da sombra.
+        shadow_alpha: Opacidade da sombra externa (0-1).
+        border_color: Cor RGB do contorno.
+        vertex_radius: Raio das bolinhas nos vértices.
 
     Returns:
         Imagem PIL com overlay aplicado.
@@ -132,20 +135,32 @@ def create_perimeter_overlay(
         draw.polygon(flat_pts, fill=255)
         mask = np.array(mask_img)
 
-    inside = (mask > 0)
+    # Sombra escura FORA do perímetro — interior fica intacto
+    outside = (mask == 0)
     result = arr.copy().astype(np.float32)
-    result[inside] = arr[inside] * (1 - alpha) + np.array(color, dtype=np.float32) * alpha
+    result[outside] = arr[outside] * (1 - shadow_alpha)
 
-    # Desenhar contorno do perímetro
     result_uint8 = result.astype(np.uint8)
+
+    # Contorno vermelho do perímetro
     if CV2_AVAILABLE:
-        cv2.polylines(result_uint8, [pts], isClosed=True, color=color, thickness=3)
+        cv2.polylines(result_uint8, [pts], isClosed=True, color=border_color, thickness=3)
+        # Bolinhas brancas nos vértices
+        for pt in polygon_points:
+            center = (int(pt[0]), int(pt[1]))
+            cv2.circle(result_uint8, center, vertex_radius, (255, 255, 255), -1)
+            cv2.circle(result_uint8, center, vertex_radius, border_color, 2)
     else:
         from PIL import ImageDraw as ID2
         pil_result = Image.fromarray(result_uint8)
         draw2 = ID2.Draw(pil_result)
         flat = [(int(p[0]), int(p[1])) for p in polygon_points]
-        draw2.polygon(flat, outline=color)
+        draw2.polygon(flat, outline=border_color)
+        # Bolinhas brancas nos vértices
+        for pt in polygon_points:
+            x, y = int(pt[0]), int(pt[1])
+            r = vertex_radius
+            draw2.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255), outline=border_color)
         result_uint8 = np.array(pil_result)
 
     return Image.fromarray(result_uint8)

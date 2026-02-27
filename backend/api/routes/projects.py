@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 
 import cv2
@@ -34,6 +35,7 @@ from backend.api.dependencies.auth import get_current_user
 
 # Importar serviços de análise
 from backend.services.image_processing import run_basic_analysis
+from backend.services.image_processing.roi_masker import create_perimeter_overlay
 
 # Importar contagem de árvores (independente de YOLO/torch)
 try:
@@ -189,7 +191,7 @@ def _compute_confidence_score(image, results: dict, has_perimeter: bool) -> dict
     }
 
 
-async def run_image_full_analysis(image, analysis, db, roi_mask=None):
+async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_path=None, image_type: str = "drone"):
     """
     Executar análise completa (básica + ML) para uma imagem.
 
@@ -199,13 +201,19 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
     Args:
         roi_mask: Máscara binária (0/1) do perímetro. Se fornecida,
                   as análises heurísticas são restritas a essa área.
+        source_path: Caminho alternativo para a imagem (original sem overlay).
+        image_type: Tipo de imagem ("drone" ou "satellite") para thresholds adaptativos.
     """
     start_time = time.time()
+    # Usar source_path se fornecido (imagem original sem overlay)
+    img_source = source_path or image.file_path
 
     try:
         # 1. Análise básica: vegetação (ExG) + cores + histograma
+        # Usar threshold menor para satélite (pixels mistos)
+        veg_threshold = 0.2 if image_type == "satellite" else 0.3
         # Usar asyncio.to_thread para não bloquear o event loop
-        results = await asyncio.to_thread(run_basic_analysis, image.file_path)
+        results = await asyncio.to_thread(run_basic_analysis, img_source, roi_mask=roi_mask, threshold=veg_threshold)
         processing_time = time.time() - start_time
 
         # Compilar resultados básicos
@@ -239,7 +247,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
             # 2a. Segmentação DeepLabV3
             if segment_image is not None:
                 try:
-                    segmentation = await asyncio.to_thread(segment_image, image.file_path)
+                    segmentation = await asyncio.to_thread(segment_image, img_source)
                     analysis_results["segmentation"] = segmentation
                 except Exception as e:
                     ml_errors.append(f"segmentation: {e}")
@@ -247,7 +255,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
             # 2b. Classificação de cena ResNet18
             if classify_scene is not None:
                 try:
-                    scene = await asyncio.to_thread(classify_scene, image.file_path)
+                    scene = await asyncio.to_thread(classify_scene, img_source)
                     analysis_results["scene_classification"] = scene
                 except Exception as e:
                     ml_errors.append(f"scene_classification: {e}")
@@ -255,7 +263,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
             # 2c. Classificação de tipo de vegetação
             if classify_vegetation_type is not None:
                 try:
-                    veg_type = await asyncio.to_thread(classify_vegetation_type, image.file_path)
+                    veg_type = await asyncio.to_thread(classify_vegetation_type, img_source)
                     analysis_results["vegetation_type"] = veg_type
                 except Exception as e:
                     ml_errors.append(f"vegetation_type: {e}")
@@ -263,7 +271,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
             # 2d. Extração de features (textura, cor, padrões, anomalias)
             if extract_all_features is not None:
                 try:
-                    features = await asyncio.to_thread(extract_all_features, image.file_path)
+                    features = await asyncio.to_thread(extract_all_features, img_source)
                     analysis_results["visual_features"] = features
                 except Exception as e:
                     ml_errors.append(f"features: {e}")
@@ -271,7 +279,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
             # 2e. Detecção YOLO (mais lenta, por último)
             if get_detection_summary is not None:
                 try:
-                    detections = await asyncio.to_thread(get_detection_summary, image.file_path)
+                    detections = await asyncio.to_thread(get_detection_summary, img_source)
                     analysis_results["object_detection"] = detections
                 except Exception as e:
                     ml_errors.append(f"object_detection: {e}")
@@ -283,7 +291,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
         if count_trees_by_segmentation is not None:
             try:
                 tree_count = await asyncio.to_thread(
-                    count_trees_by_segmentation, image.file_path, roi_mask=roi_mask
+                    count_trees_by_segmentation, img_source, roi_mask=roi_mask, image_type=image_type
                 )
                 analysis_results["tree_count"] = tree_count
 
@@ -314,7 +322,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
         if detect_pest_disease is not None:
             try:
                 pest_results = await asyncio.to_thread(
-                    detect_pest_disease, image.file_path, roi_mask=roi_mask
+                    detect_pest_disease, img_source, roi_mask=roi_mask
                 )
                 analysis_results["pest_disease"] = pest_results
             except Exception as e:
@@ -326,7 +334,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
         if estimate_biomass is not None:
             try:
                 biomass = await asyncio.to_thread(
-                    estimate_biomass, image.file_path, roi_mask=roi_mask
+                    estimate_biomass, img_source, roi_mask=roi_mask
                 )
                 analysis_results["biomass"] = biomass
             except Exception as e:
@@ -366,6 +374,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None):
 async def run_video_analysis(image, analysis, db):
     """
     Executar análise de vídeo usando VideoAnalyzer.
+    Após extrair keyframes, roda análises ML (árvores, pragas, biomassa) em cada keyframe.
     """
     start_time = time.time()
 
@@ -381,7 +390,63 @@ async def run_video_analysis(image, analysis, db):
             50   # max_frames
         )
 
+        # Rodar análises ML nos keyframes extraídos
+        keyframes = video_results.get('key_frames', [])
+        keyframe_analyses = []
+        total_trees = 0
+        total_pest_areas = 0
+        biomass_indices = []
+        keyframe_paths = []
+
+        for kf in keyframes:
+            kf_path = kf.get('path')
+            if not kf_path or not os.path.exists(kf_path):
+                continue
+
+            keyframe_paths.append(kf_path)
+            kf_result = {}
+
+            # Contagem de árvores
+            if count_trees_by_segmentation is not None:
+                try:
+                    tree_data = await asyncio.to_thread(count_trees_by_segmentation, kf_path, image_type=image.image_type or "drone")
+                    kf_result['tree_count'] = tree_data
+                    total_trees += tree_data.get('total_trees', 0)
+                except Exception as e:
+                    logger.warning("tree_count em keyframe falhou: %s", e)
+
+            # Detecção de pragas
+            if detect_pest_disease is not None:
+                try:
+                    pest_data = await asyncio.to_thread(detect_pest_disease, kf_path)
+                    kf_result['pest_disease'] = pest_data
+                    total_pest_areas += pest_data.get('total_anomalies', 0)
+                except Exception as e:
+                    logger.warning("pest_disease em keyframe falhou: %s", e)
+
+            # Biomassa
+            if estimate_biomass is not None:
+                try:
+                    bio_data = await asyncio.to_thread(estimate_biomass, kf_path)
+                    kf_result['biomass'] = bio_data
+                    if bio_data.get('biomass_index') is not None:
+                        biomass_indices.append(bio_data['biomass_index'])
+                except Exception as e:
+                    logger.warning("biomass em keyframe falhou: %s", e)
+
+            keyframe_analyses.append(kf_result)
+
         processing_time = time.time() - start_time
+
+        # Agregar resultados dos keyframes
+        num_kf = max(len(keyframe_analyses), 1)
+        keyframe_aggregated = {
+            "total_trees_detected": total_trees,
+            "avg_trees_per_frame": round(total_trees / num_kf, 1),
+            "total_pest_anomalies": total_pest_areas,
+            "avg_biomass_index": round(sum(biomass_indices) / len(biomass_indices), 2) if biomass_indices else None,
+            "keyframes_analyzed": len(keyframe_analyses),
+        }
 
         analysis_results = {
             "image_info": {
@@ -394,15 +459,29 @@ async def run_video_analysis(image, analysis, db):
             "frames_analyzed": video_results.get('frame_count_analyzed', 0),
             "temporal_summary": video_results.get('temporal_summary', {}),
             "mosaic_path": video_results.get('mosaic_path'),
+            "keyframe_ml_analysis": keyframe_aggregated,
         }
+
+        # Adicionar contagem de árvores no formato padrão para compatibilidade
+        if total_trees > 0:
+            analysis_results["object_detection"] = {
+                "total_detections": total_trees,
+                "by_class": {"arvore": total_trees},
+                "avg_confidence": 0.80,
+                "detections": [],
+                "source": "video_keyframe_segmentation",
+            }
 
         analysis.status = "completed"
         analysis.results = analysis_results
         analysis.processing_time_seconds = round(processing_time, 2)
         analysis.completed_at = datetime.now(timezone.utc)
 
+        output_files = keyframe_paths.copy()
         if video_results.get('mosaic_path'):
-            analysis.output_files = [video_results['mosaic_path']]
+            output_files.append(video_results['mosaic_path'])
+        if output_files:
+            analysis.output_files = output_files
 
         image.status = "analyzed"
 
@@ -426,12 +505,12 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
 
     async with async_session_maker() as db:
         try:
-            # Carregar perímetro do projeto (se definido)
+            # Carregar perímetro do projeto (fallback para imagens sem perímetro próprio)
             project_result = await db.execute(
                 select(Project).where(Project.id == project_id)
             )
             project = project_result.scalar_one_or_none()
-            perimeter_polygon = project.perimeter_polygon if project else None
+            project_perimeter = project.perimeter_polygon if project else None
 
             # Processar imagens
             for image_id in image_ids:
@@ -454,12 +533,20 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 if existing.scalar_one_or_none():
                     continue
 
-                # Gerar máscara ROI a partir do perímetro do projeto
+                # Usar imagem original (sem overlay) para análise
+                orig_path = Path(image.file_path)
+                backup_path = orig_path.parent / f"{orig_path.stem}_original{orig_path.suffix}"
+                source_for_analysis = str(backup_path) if backup_path.exists() else image.file_path
+
+                # Usar perímetro PER-IMAGE com fallback para project perimeter
+                perimeter_polygon = image.perimeter_polygon if image.perimeter_polygon else project_perimeter
+
+                # Gerar máscara ROI a partir do perímetro
                 roi_mask = None
                 if perimeter_polygon and len(perimeter_polygon) >= 3:
                     try:
                         roi_mask = await asyncio.to_thread(
-                            _build_roi_mask_from_polygon, image.file_path, perimeter_polygon
+                            _build_roi_mask_from_polygon, source_for_analysis, perimeter_polygon
                         )
                     except Exception:
                         roi_mask = None  # Fallback: analisar imagem inteira
@@ -474,13 +561,50 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                         "auto_triggered": True,
                         "ml_enabled": ML_AVAILABLE,
                         "has_perimeter": perimeter_polygon is not None,
+                        "image_type": image.image_type or "drone",
                     }
                 )
                 db.add(analysis)
                 await db.commit()
                 await db.refresh(analysis)
 
-                await run_image_full_analysis(image, analysis, db, roi_mask=roi_mask)
+                await run_image_full_analysis(
+                    image, analysis, db,
+                    roi_mask=roi_mask,
+                    source_path=source_for_analysis,
+                    image_type=image.image_type or "drone",
+                )
+
+                # Salvar overlay (sombra fora, borda vermelha, bolinhas) na imagem
+                if perimeter_polygon and len(perimeter_polygon) >= 3 and image.width and image.height:
+                    try:
+                        # Converter polígono normalizado (0-1) para pixels
+                        pixel_polygon = [
+                            [p[0] * image.width, p[1] * image.height]
+                            for p in perimeter_polygon
+                        ]
+                        # Backup do original (só na primeira vez)
+                        orig_path = Path(image.file_path)
+                        backup_path = orig_path.parent / f"{orig_path.stem}_original{orig_path.suffix}"
+                        if not backup_path.exists():
+                            import shutil
+                            shutil.copy2(image.file_path, str(backup_path))
+
+                        # Gerar overlay e salvar sobre a imagem principal
+                        overlay_img = await asyncio.to_thread(
+                            create_perimeter_overlay, str(backup_path), pixel_polygon
+                        )
+                        overlay_img.save(image.file_path, "JPEG", quality=95)
+                        logger.info("Overlay do perímetro salvo em: %s", image.file_path)
+
+                        # Deletar thumbnails para forçar regeneração
+                        thumb_dir = os.path.join(os.path.dirname(image.file_path), "thumbnails")
+                        if os.path.exists(thumb_dir):
+                            for f in os.listdir(thumb_dir):
+                                if orig_path.stem in f:
+                                    os.remove(os.path.join(thumb_dir, f))
+                    except Exception as overlay_err:
+                        logger.warning("Falha ao salvar overlay: %s", overlay_err)
 
             # Processar vídeos
             for video_id in video_ids:
@@ -1205,6 +1329,7 @@ async def delete_project(
 async def analyze_project(
     project_id: int,
     background_tasks: BackgroundTasks,
+    force: bool = Query(False, description="Forçar re-análise deletando análises existentes"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1212,6 +1337,7 @@ async def analyze_project(
     Disparar análise em todas as imagens de um projeto.
 
     As análises são executadas em background.
+    Use force=true para forçar re-análise mesmo de imagens/vídeos já analisados.
     """
     # Verificar projeto
     result = await db.execute(
@@ -1242,17 +1368,26 @@ async def analyze_project(
 
     # Limpar análises com erro ou stuck em processing para permitir re-análise
     for image in images:
-        stale_analyses = await db.execute(
-            select(Analysis).where(
-                Analysis.image_id == image.id,
-                Analysis.status.in_(["error", "processing"])
+        if force:
+            # Forçar: deletar TODAS as análises (inclusive completed)
+            all_analyses = await db.execute(
+                select(Analysis).where(Analysis.image_id == image.id)
             )
-        )
-        for stale_analysis in stale_analyses.scalars().all():
-            await db.delete(stale_analysis)
-        # Reset image status if it was stuck
-        if image.status == "processing" or image.status == "error":
+            for old_analysis in all_analyses.scalars().all():
+                await db.delete(old_analysis)
             image.status = "uploaded"
+        else:
+            stale_analyses = await db.execute(
+                select(Analysis).where(
+                    Analysis.image_id == image.id,
+                    Analysis.status.in_(["error", "processing"])
+                )
+            )
+            for stale_analysis in stale_analyses.scalars().all():
+                await db.delete(stale_analysis)
+            # Reset image status if it was stuck
+            if image.status == "processing" or image.status == "error":
+                image.status = "uploaded"
     await db.commit()
 
     # Separar imagens e vídeos que precisam de análise

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field as PydField
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -529,6 +530,57 @@ async def get_image_file(
     )
 
 
+@router.get("/{image_id}/original")
+async def get_image_original(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Servir o arquivo original da imagem (backup sem overlay).
+
+    Se o overlay foi aplicado, o backup _original foi salvo ao lado.
+    Se não existir backup, serve o arquivo normal (fallback).
+    """
+    from pathlib import Path
+
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada"
+        )
+
+    # Tentar encontrar o backup _original
+    file_path = Path(image.file_path)
+    original_path = file_path.with_name(f"{file_path.stem}_original{file_path.suffix}")
+
+    if original_path.exists():
+        return FileResponse(
+            str(original_path),
+            media_type=image.mime_type or "application/octet-stream",
+            filename=image.original_filename,
+        )
+
+    # Fallback: serve o arquivo normal (sem overlay ou overlay não aplicado)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Arquivo não encontrado no disco"
+        )
+
+    return FileResponse(
+        str(file_path),
+        media_type=image.mime_type or "application/octet-stream",
+        filename=image.original_filename,
+    )
+
+
 @router.get("/{image_id}/metadata", response_model=ImageMetadata)
 async def get_image_metadata(
     image_id: int,
@@ -742,6 +794,42 @@ async def get_image_utm_info(
     }
 
 
+class SaveImagePerimeterRequest(BaseModel):
+    perimeter_polygon: list  # [[x, y], ...] normalizado 0-1
+
+
+@router.put("/{image_id}/perimeter")
+async def save_image_perimeter(
+    image_id: int,
+    body: SaveImagePerimeterRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Salvar perímetro (polígono normalizado 0-1) específico de uma imagem."""
+    result = await db.execute(
+        select(Image)
+        .where(Image.id == image_id)
+        .where(Image.project.has(Project.owner_id == current_user.id))
+    )
+    image = result.scalar_one_or_none()
+
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem não encontrada",
+        )
+
+    image.perimeter_polygon = body.perimeter_polygon
+    await db.commit()
+    await db.refresh(image)
+
+    return {
+        "image_id": image.id,
+        "perimeter_polygon": image.perimeter_polygon,
+        "message": "Perímetro salvo com sucesso",
+    }
+
+
 @router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_image(
     image_id: int,
@@ -786,9 +874,6 @@ async def delete_image(
 # ============================================
 # CAPTURE FROM COORDINATES
 # ============================================
-
-from pydantic import BaseModel, Field as PydField
-
 
 class CaptureFromCoordinatesRequest(BaseModel):
     latitude: float = PydField(..., ge=-90, le=90)
@@ -846,6 +931,10 @@ async def capture_from_coordinates(
         db.add(project)
         await db.flush()  # Gerar ID
 
+    # Diretório do projeto para salvar a imagem
+    project_upload_dir = os.path.join(settings.UPLOAD_DIR, str(current_user.id), str(project.id))
+    os.makedirs(project_upload_dir, exist_ok=True)
+
     # Buscar imagem do provedor
     try:
         import asyncio
@@ -854,7 +943,7 @@ async def capture_from_coordinates(
             lon=body.longitude,
             radius_m=body.radius_m,
             provider=body.provider,
-            upload_dir=settings.UPLOAD_DIR,
+            upload_dir=project_upload_dir,
         )
     except ValueError as e:
         raise HTTPException(
@@ -886,6 +975,16 @@ async def capture_from_coordinates(
         status="uploaded",
     )
     db.add(image)
+
+    # Gerar thumbnail
+    try:
+        thumb_dir = os.path.join(project_upload_dir, "thumbnails")
+        os.makedirs(thumb_dir, exist_ok=True)
+        thumb_filename = f"{os.path.splitext(result['filename'])[0]}_thumb.jpg"
+        thumb_path = os.path.join(thumb_dir, thumb_filename)
+        save_thumbnail(result["file_path"], thumb_path, size=(400, 400))
+    except Exception as thumb_err:
+        logger.warning("Falha ao gerar thumbnail: %s", thumb_err)
 
     # Atualizar coordenadas do projeto se não definidas
     if not project.latitude:

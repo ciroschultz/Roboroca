@@ -1518,7 +1518,64 @@ async def analyze_video_endpoint(
             max_frames=max_frames
         )
 
+        # Rodar análises ML nos keyframes extraídos
+        keyframes = video_results.get('key_frames', [])
+        total_trees = 0
+        total_pest_areas = 0
+        biomass_indices = []
+        keyframe_paths = []
+        num_analyzed = 0
+
+        # Importar contagem de árvores/pragas/biomassa
+        try:
+            from backend.services.ml.tree_counter import count_trees_by_segmentation as _count_trees
+        except ImportError:
+            _count_trees = None
+        try:
+            from backend.services.ml.biomass_estimator import estimate_biomass as _estimate_biomass
+        except ImportError:
+            _estimate_biomass = None
+
+        for kf in keyframes:
+            kf_path = kf.get('path')
+            if not kf_path or not os.path.exists(kf_path):
+                continue
+
+            keyframe_paths.append(kf_path)
+            num_analyzed += 1
+
+            if _count_trees is not None:
+                try:
+                    tree_data = await asyncio.to_thread(_count_trees, kf_path, image_type=image.image_type or "drone")
+                    total_trees += tree_data.get('total_trees', 0)
+                except Exception:
+                    pass
+
+            if detect_pest_disease is not None:
+                try:
+                    pest_data = await asyncio.to_thread(detect_pest_disease, kf_path)
+                    total_pest_areas += pest_data.get('total_anomalies', 0)
+                except Exception:
+                    pass
+
+            if _estimate_biomass is not None:
+                try:
+                    bio_data = await asyncio.to_thread(_estimate_biomass, kf_path)
+                    if bio_data.get('biomass_index') is not None:
+                        biomass_indices.append(bio_data['biomass_index'])
+                except Exception:
+                    pass
+
         processing_time = time.time() - start_time
+
+        num_kf = max(num_analyzed, 1)
+        keyframe_aggregated = {
+            "total_trees_detected": total_trees,
+            "avg_trees_per_frame": round(total_trees / num_kf, 1),
+            "total_pest_anomalies": total_pest_areas,
+            "avg_biomass_index": round(sum(biomass_indices) / len(biomass_indices), 2) if biomass_indices else None,
+            "keyframes_analyzed": num_analyzed,
+        }
 
         # Preparar resultados
         results = {
@@ -1527,7 +1584,17 @@ async def analyze_video_endpoint(
             "frames_analyzed": video_results['frame_count_analyzed'],
             "temporal_summary": video_results['temporal_summary'],
             "mosaic_path": video_results.get('mosaic_path'),
+            "keyframe_ml_analysis": keyframe_aggregated,
         }
+
+        if total_trees > 0:
+            results["object_detection"] = {
+                "total_detections": total_trees,
+                "by_class": {"arvore": total_trees},
+                "avg_confidence": 0.80,
+                "detections": [],
+                "source": "video_keyframe_segmentation",
+            }
 
         # Atualizar análise
         analysis.status = "completed"
@@ -1535,8 +1602,11 @@ async def analyze_video_endpoint(
         analysis.processing_time_seconds = round(processing_time, 2)
         analysis.completed_at = datetime.now(timezone.utc)
 
+        output_files = keyframe_paths.copy()
         if video_results.get('mosaic_path'):
-            analysis.output_files = [video_results['mosaic_path']]
+            output_files.append(video_results['mosaic_path'])
+        if output_files:
+            analysis.output_files = output_files
 
         await db.commit()
         await db.refresh(analysis)
@@ -1765,7 +1835,7 @@ async def analyze_roi(
             try:
                 with PILImage.open(image.file_path) as _img:
                     _arr = np.array(_img.convert("RGB"))
-                health = await asyncio.to_thread(estimate_vegetation_health, _arr)
+                health = await asyncio.to_thread(estimate_vegetation_health, _arr, roi_mask=roi_mask)
                 results["health"] = health
             except Exception as e:
                 results["health"] = {"error": str(e)}
@@ -1809,27 +1879,38 @@ async def analyze_roi(
         analysis.processing_time_seconds = round(processing_time, 2)
         analysis.completed_at = datetime.now(timezone.utc)
 
-        # Salvar overlay vermelho sobre a imagem principal
-        # A imagem original é mantida intacta com sombra vermelha fora do perímetro
+        # Salvar polígono normalizado na imagem (per-image perimeter)
         try:
+            if image.width and image.height:
+                normalized = [
+                    [p[0] / image.width, p[1] / image.height]
+                    for p in body.roi_polygon
+                ]
+                image.perimeter_polygon = normalized
+        except Exception as e:
+            logger.warning("Falha ao salvar perímetro na imagem: %s", e)
+
+        # Salvar overlay (sombra fora, borda vermelha, bolinhas) na imagem
+        try:
+            from pathlib import Path as _Path
+            import shutil
+            orig_path = _Path(image.file_path)
+            backup_path = orig_path.parent / f"{orig_path.stem}_original{orig_path.suffix}"
+            if not backup_path.exists():
+                shutil.copy2(image.file_path, str(backup_path))
+
             overlay_img = await asyncio.to_thread(
-                create_perimeter_overlay, image.file_path, body.roi_polygon
+                create_perimeter_overlay, str(backup_path), body.roi_polygon
             )
-            # Sobrescrever imagem principal com versão overlay (sombra vermelha fora do ROI)
             overlay_img.save(image.file_path, "JPEG", quality=95)
-            # Também salvar cópia separada para referência
-            overlay_name = f"{Path(image.file_path).stem}_perimeter.jpg"
-            overlay_path = str(Path(image.file_path).parent / overlay_name)
-            overlay_img.save(overlay_path, "JPEG", quality=95)
-            results["perimeter_overlay_path"] = overlay_path
-            # Deletar thumbnails existentes para forçar regeneração
+            logger.info("Overlay ROI salvo em: %s", image.file_path)
+
+            # Deletar thumbnails para forçar regeneração
             thumb_dir = os.path.join(os.path.dirname(image.file_path), "thumbnails")
             if os.path.exists(thumb_dir):
-                thumb_stem = os.path.splitext(image.filename)[0]
-                for suffix in [f"{thumb_stem}_thumb.jpg", os.path.basename(image.file_path)]:
-                    tp = os.path.join(thumb_dir, suffix)
-                    if os.path.exists(tp):
-                        os.remove(tp)
+                for f in os.listdir(thumb_dir):
+                    if orig_path.stem in f:
+                        os.remove(os.path.join(thumb_dir, f))
         except Exception as save_err:
             logger.warning("Falha ao salvar overlay do perímetro: %s", save_err)
 

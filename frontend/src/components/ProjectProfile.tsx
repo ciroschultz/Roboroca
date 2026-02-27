@@ -142,14 +142,17 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showProjectSwitcher, setShowProjectSwitcher] = useState(false)
-  const [showPerimeterEditor, setShowPerimeterEditor] = useState(openPerimeterEditor || false)
+  const [showPerimeterEditor, setShowPerimeterEditor] = useState(
+    (openPerimeterEditor && project.status !== 'completed') || false
+  )
 
   // Reagir a mudanças de openPerimeterEditor (ex: após upload ou captura GPS)
+  // Não abrir automaticamente se o projeto já foi analisado (completed)
   useEffect(() => {
-    if (openPerimeterEditor) {
+    if (openPerimeterEditor && project.status !== 'completed') {
       setShowPerimeterEditor(true)
     }
-  }, [openPerimeterEditor])
+  }, [openPerimeterEditor, project.status])
 
   // Reagir a mudanças de initialTab (ex: clique em submenu da sidebar)
   useEffect(() => {
@@ -301,7 +304,11 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   }, [project.id, fetchTimeline])
 
   const handleStartAnalysis = () => {
-    setShowPerimeterEditor(true)
+    if (project.status === 'completed') {
+      setActiveTab('analysis')
+    } else {
+      setShowPerimeterEditor(true)
+    }
   }
 
   const handleRunAnalysis = async () => {
@@ -333,9 +340,9 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   const handleReanalyze = async () => {
     try {
       setIsReanalyzing(true)
-      const result = await analyzeProject(Number(project.id))
+      const result = await analyzeProject(Number(project.id), true)
       if (result.analyses_started === 0) {
-        toast.info('Analise ja realizada', 'Todas as imagens ja foram analisadas. Delete analises anteriores para forcar re-analise.')
+        toast.info('Analise ja realizada', 'Nenhum arquivo para analisar neste projeto.')
         return
       }
       toast.info('Re-analise iniciada', `Analisando ${result.analyses_started} arquivo(s)...`)
@@ -1256,8 +1263,35 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                 </button>
               </div>
             </div>
+          ) : project.status === 'completed' ? (
+            /* Projeto completed mas results não carregados no frontend */
+            <div className="flex flex-col items-center justify-center py-16">
+              <div className="w-24 h-24 rounded-full bg-green-900/20 flex items-center justify-center mb-6">
+                <CheckCircle size={48} className="text-green-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-2">Analise concluida</h3>
+              <p className="text-gray-400 text-center max-w-md mb-4">
+                A analise deste projeto foi concluida. Visualize os resultados nas abas abaixo.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setActiveTab('map')}
+                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
+                >
+                  <Globe size={16} />
+                  Visualizar Mapa
+                </button>
+                <button
+                  onClick={() => setActiveTab('analysis')}
+                  className="px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white rounded-lg transition-colors font-medium flex items-center gap-2"
+                >
+                  <Cpu size={16} />
+                  Analise ML
+                </button>
+              </div>
+            </div>
           ) : (
-            /* Sem resultados nenhum */
+            /* Sem resultados nenhum — projeto pendente */
             <div className="flex flex-col items-center justify-center py-16">
               <div className="w-24 h-24 rounded-full bg-blue-900/20 flex items-center justify-center mb-6">
                 <BarChart3 size={48} className="text-blue-400" />
@@ -2007,6 +2041,47 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                         )}
                       </div>
                     )}
+
+                    {/* Resultados ML dos keyframes (árvores, pragas, biomassa) */}
+                    {(() => {
+                      const kfMl = videoAnalysis?.results?.keyframe_ml_analysis as Record<string, unknown> | undefined
+                      if (!kfMl) return null
+                      return (
+                        <div className="mt-4">
+                          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Analise ML dos Keyframes</p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            {(kfMl.total_trees_detected as number) > 0 && (
+                              <div className="p-3 bg-green-900/20 border border-green-700/30 rounded-lg">
+                                <p className="text-xs text-gray-500">Arvores Detectadas</p>
+                                <p className="text-lg font-bold text-[#6AAF3D]">{kfMl.total_trees_detected as number}</p>
+                                <p className="text-[10px] text-gray-600">~{kfMl.avg_trees_per_frame as number}/frame</p>
+                              </div>
+                            )}
+                            {(kfMl.total_pest_anomalies as number) > 0 && (
+                              <div className="p-3 bg-red-900/20 border border-red-700/30 rounded-lg">
+                                <p className="text-xs text-gray-500">Anomalias de Pragas</p>
+                                <p className="text-lg font-bold text-red-400">{kfMl.total_pest_anomalies as number}</p>
+                              </div>
+                            )}
+                            {kfMl.avg_biomass_index != null && (
+                              <div className="p-3 bg-emerald-900/20 border border-emerald-700/30 rounded-lg">
+                                <p className="text-xs text-gray-500">Biomassa Media</p>
+                                <p className="text-lg font-bold text-emerald-400">{kfMl.avg_biomass_index as number}</p>
+                              </div>
+                            )}
+                            <div className="p-3 bg-gray-800/30 rounded-lg">
+                              <p className="text-xs text-gray-500">Keyframes Analisados</p>
+                              <p className="text-lg font-bold text-white">{kfMl.keyframes_analyzed as number}</p>
+                            </div>
+                          </div>
+                          {(kfMl.total_trees_detected as number) === 0 && (kfMl.total_pest_anomalies as number) === 0 && kfMl.avg_biomass_index == null && (
+                            <p className="text-xs text-gray-500 mt-2 italic">
+                              Nenhum resultado ML disponivel. Re-analise o projeto para gerar resultados dos keyframes.
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
 
