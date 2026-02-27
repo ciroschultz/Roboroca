@@ -87,14 +87,18 @@ export default function PerimeterEditor({ projectId, onComplete, onCancel }: Per
     return VIDEO_EXTENSIONS.includes(ext)
   }
 
-  // Load project images (filter out videos — they don't need perimeters)
+  // Load project images (filter out videos and keyframes — they don't need perimeters)
   useEffect(() => {
     const load = async () => {
       try {
         const data = await getImages(projectId, 0, 100)
         const videos = data.images.filter(img => isVideoFile(img.original_filename))
         setVideoCount(videos.length)
-        setImages(data.images.filter(img => !isVideoFile(img.original_filename)))
+        setImages(data.images.filter(img =>
+          !isVideoFile(img.original_filename) &&
+          !img.source_video_id &&
+          img.image_type !== 'keyframe'
+        ))
       } catch {
         toast.error('Erro', 'Não foi possível carregar imagens do projeto')
       }

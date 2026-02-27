@@ -339,6 +339,7 @@ export interface ImageData {
   file_size: number
   mime_type: string
   image_type: string
+  source_video_id?: number | null
   width?: number
   height?: number
   center_lat?: number

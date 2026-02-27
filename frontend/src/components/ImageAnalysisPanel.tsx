@@ -260,6 +260,7 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
   }
 
   const isVideo = selectedImage ? isVideoFile(selectedImage.original_filename) : false
+  const isKeyframe = selectedImage ? (selectedImage.image_type === 'keyframe' || !!selectedImage.source_video_id) : false
 
   // Analysis action buttons config
   const imageActions = [
@@ -390,6 +391,17 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
               <div className="w-full h-full bg-gray-800 flex items-center justify-center">
                 <Video size={20} className="text-red-400" />
               </div>
+            ) : img.image_type === 'keyframe' || img.source_video_id ? (
+              <div className="relative w-full h-full">
+                <AuthImg
+                  src={getImageThumbnailUrl(img.id)}
+                  alt={img.original_filename}
+                  className="w-full h-full object-cover"
+                />
+                <span className="absolute top-0.5 right-0.5 px-1 py-0 text-[8px] font-bold bg-orange-600/80 text-white rounded">
+                  KF
+                </span>
+              </div>
             ) : (
               <AuthImg
                 src={getImageThumbnailUrl(img.id)}
@@ -410,7 +422,14 @@ export default function ImageAnalysisPanel({ projectId, onAnalysisComplete }: Im
           {/* Image Header */}
           <div className="flex items-center justify-between p-4 bg-gray-800/30">
             <div>
-              <h4 className="text-white font-medium text-sm">{selectedImage.original_filename}</h4>
+              <div className="flex items-center gap-2">
+                <h4 className="text-white font-medium text-sm">{selectedImage.original_filename}</h4>
+                {isKeyframe && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-orange-600/30 text-orange-400 rounded">
+                    Keyframe
+                  </span>
+                )}
+              </div>
               <p className="text-gray-500 text-xs mt-0.5">
                 {selectedImage.width && selectedImage.height
                   ? `${selectedImage.width}x${selectedImage.height} · `

@@ -24,8 +24,11 @@ class Image(Base):
     mime_type = Column(String(100), nullable=True)
 
     # Tipo de imagem
-    image_type = Column(String(50), default="drone")  # drone, satellite, aerial
+    image_type = Column(String(50), default="drone")  # drone, satellite, aerial, keyframe
     source = Column(String(100), nullable=True)  # Sentinel-2, DJI, etc.
+
+    # Se este registro é um keyframe extraído de um vídeo
+    source_video_id = Column(Integer, ForeignKey("images.id"), nullable=True)
 
     # Metadados geoespaciais
     width = Column(Integer, nullable=True)

@@ -12,14 +12,14 @@ from pydantic import BaseModel, Field
 class ImageCreate(BaseModel):
     """Schema para criar registro de imagem."""
     project_id: int
-    image_type: str = Field(default="drone", pattern="^(drone|satellite|aerial)$")
+    image_type: str = Field(default="drone", pattern="^(drone|satellite|aerial|keyframe)$")
     source: Optional[str] = None
     capture_date: Optional[datetime] = None
 
 
 class ImageUpdate(BaseModel):
     """Schema para atualizar imagem."""
-    image_type: Optional[str] = Field(None, pattern="^(drone|satellite|aerial)$")
+    image_type: Optional[str] = Field(None, pattern="^(drone|satellite|aerial|keyframe)$")
     source: Optional[str] = None
     capture_date: Optional[datetime] = None
 
@@ -44,6 +44,7 @@ class ImageResponse(BaseModel):
     resolution: Optional[float]
     bands: Optional[List[str]]
     capture_date: Optional[datetime]
+    source_video_id: Optional[int] = None
     status: str
     project_id: int
     created_at: datetime

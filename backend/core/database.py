@@ -52,6 +52,16 @@ async def init_db():
         # Criar todas as tabelas
         await conn.run_sync(Base.metadata.create_all)
 
+        # Migrações manuais (SQLite não suporta ADD COLUMN IF NOT EXISTS)
+        try:
+            await conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE images ADD COLUMN source_video_id INTEGER"
+                )
+            )
+        except Exception:
+            pass  # Coluna já existe
+
     print("Database tables created successfully")
 
 

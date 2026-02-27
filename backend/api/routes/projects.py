@@ -371,11 +371,20 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
         await db.commit()
 
 
-async def run_video_analysis(image, analysis, db):
+async def run_video_analysis(image, analysis, db, roi_mask=None, image_type: str = "drone"):
     """
     Executar análise de vídeo usando VideoAnalyzer.
-    Após extrair keyframes, roda análises ML (árvores, pragas, biomassa) em cada keyframe.
+    Extrai keyframes, cria Image records no banco para cada um,
+    e roda run_image_full_analysis() em cada keyframe (mesma pipeline das imagens).
+    Mantém Analysis(type="video_analysis") no vídeo com dados temporais agregados.
+
+    Args:
+        roi_mask: Máscara binária (0/1) do perímetro. Se fornecida,
+                  as análises heurísticas são restritas a essa área.
+        image_type: Tipo de imagem ("drone" ou "satellite") para thresholds adaptativos.
     """
+    from backend.services.image_processing import save_thumbnail
+
     start_time = time.time()
 
     try:
@@ -390,64 +399,109 @@ async def run_video_analysis(image, analysis, db):
             50   # max_frames
         )
 
-        # Rodar análises ML nos keyframes extraídos
+        # Extrair keyframes e criar Image records para cada um
         keyframes = video_results.get('key_frames', [])
-        keyframe_analyses = []
-        total_trees = 0
-        total_pest_areas = 0
-        biomass_indices = []
+        keyframe_image_ids = []
         keyframe_paths = []
 
-        for kf in keyframes:
+        for kf_idx, kf in enumerate(keyframes):
             kf_path = kf.get('path')
             if not kf_path or not os.path.exists(kf_path):
                 continue
 
             keyframe_paths.append(kf_path)
-            kf_result = {}
 
-            # Contagem de árvores
-            if count_trees_by_segmentation is not None:
+            # Ler dimensões do keyframe
+            kf_width, kf_height = None, None
+            try:
+                kf_img = cv2.imread(kf_path)
+                if kf_img is not None:
+                    kf_height, kf_width = kf_img.shape[:2]
+            except Exception:
+                pass
+
+            # Obter tamanho do arquivo
+            kf_file_size = None
+            try:
+                kf_file_size = os.path.getsize(kf_path)
+            except Exception:
+                pass
+
+            # Criar Image record para o keyframe
+            kf_filename = os.path.basename(kf_path)
+            kf_image = Image(
+                filename=kf_filename,
+                original_filename=f"{os.path.splitext(image.original_filename)[0]}_keyframe_{kf_idx:03d}.jpg",
+                file_path=kf_path,
+                file_size=kf_file_size,
+                mime_type="image/jpeg",
+                image_type="keyframe",
+                source=f"video:{image.id}",
+                width=kf_width,
+                height=kf_height,
+                center_lat=image.center_lat,
+                center_lon=image.center_lon,
+                project_id=image.project_id,
+                source_video_id=image.id,
+                perimeter_polygon=image.perimeter_polygon,
+                status="uploaded",
+            )
+            db.add(kf_image)
+            await db.flush()  # Gerar ID
+
+            # Gerar thumbnail
+            try:
+                thumb_dir = os.path.join(os.path.dirname(kf_path), "thumbnails")
+                os.makedirs(thumb_dir, exist_ok=True)
+                thumb_filename = f"{os.path.splitext(kf_filename)[0]}_thumb.jpg"
+                thumb_path = os.path.join(thumb_dir, thumb_filename)
+                await asyncio.to_thread(save_thumbnail, kf_path, thumb_path, (400, 400))
+            except Exception as e:
+                logger.warning("Falha ao gerar thumbnail do keyframe %d: %s", kf_idx, e)
+
+            # Construir ROI mask para o keyframe (a partir do perímetro do vídeo)
+            kf_roi_mask = None
+            kf_perimeter = kf_image.perimeter_polygon
+            if kf_perimeter and len(kf_perimeter) >= 3 and kf_width and kf_height:
                 try:
-                    tree_data = await asyncio.to_thread(count_trees_by_segmentation, kf_path, image_type=image.image_type or "drone")
-                    kf_result['tree_count'] = tree_data
-                    total_trees += tree_data.get('total_trees', 0)
-                except Exception as e:
-                    logger.warning("tree_count em keyframe falhou: %s", e)
+                    kf_roi_mask = await asyncio.to_thread(
+                        _build_roi_mask_from_polygon, kf_path, kf_perimeter
+                    )
+                except Exception:
+                    kf_roi_mask = roi_mask  # Fallback para ROI do vídeo
 
-            # Detecção de pragas
-            if detect_pest_disease is not None:
-                try:
-                    pest_data = await asyncio.to_thread(detect_pest_disease, kf_path)
-                    kf_result['pest_disease'] = pest_data
-                    total_pest_areas += pest_data.get('total_anomalies', 0)
-                except Exception as e:
-                    logger.warning("pest_disease em keyframe falhou: %s", e)
+            # Criar Analysis(type="full_report") para o keyframe
+            kf_analysis = Analysis(
+                analysis_type="full_report",
+                status="processing",
+                image_id=kf_image.id,
+                config={
+                    "threshold": 0.3,
+                    "auto_triggered": True,
+                    "ml_enabled": ML_AVAILABLE,
+                    "has_perimeter": kf_perimeter is not None,
+                    "image_type": image_type,
+                    "source_video_id": image.id,
+                }
+            )
+            db.add(kf_analysis)
+            await db.commit()
+            await db.refresh(kf_analysis)
+            await db.refresh(kf_image)
 
-            # Biomassa
-            if estimate_biomass is not None:
-                try:
-                    bio_data = await asyncio.to_thread(estimate_biomass, kf_path)
-                    kf_result['biomass'] = bio_data
-                    if bio_data.get('biomass_index') is not None:
-                        biomass_indices.append(bio_data['biomass_index'])
-                except Exception as e:
-                    logger.warning("biomass em keyframe falhou: %s", e)
+            # Rodar análise completa (mesma pipeline das imagens)
+            await run_image_full_analysis(
+                kf_image, kf_analysis, db,
+                roi_mask=kf_roi_mask,
+                source_path=kf_path,
+                image_type=image_type,
+            )
 
-            keyframe_analyses.append(kf_result)
+            keyframe_image_ids.append(kf_image.id)
 
         processing_time = time.time() - start_time
 
-        # Agregar resultados dos keyframes
-        num_kf = max(len(keyframe_analyses), 1)
-        keyframe_aggregated = {
-            "total_trees_detected": total_trees,
-            "avg_trees_per_frame": round(total_trees / num_kf, 1),
-            "total_pest_anomalies": total_pest_areas,
-            "avg_biomass_index": round(sum(biomass_indices) / len(biomass_indices), 2) if biomass_indices else None,
-            "keyframes_analyzed": len(keyframe_analyses),
-        }
-
+        # Montar resultado agregado do vídeo (info temporal + referências aos keyframes)
         analysis_results = {
             "image_info": {
                 "filename": image.original_filename,
@@ -459,18 +513,9 @@ async def run_video_analysis(image, analysis, db):
             "frames_analyzed": video_results.get('frame_count_analyzed', 0),
             "temporal_summary": video_results.get('temporal_summary', {}),
             "mosaic_path": video_results.get('mosaic_path'),
-            "keyframe_ml_analysis": keyframe_aggregated,
+            "keyframe_image_ids": keyframe_image_ids,
+            "keyframes_created": len(keyframe_image_ids),
         }
-
-        # Adicionar contagem de árvores no formato padrão para compatibilidade
-        if total_trees > 0:
-            analysis_results["object_detection"] = {
-                "total_detections": total_trees,
-                "by_class": {"arvore": total_trees},
-                "avg_confidence": 0.80,
-                "detections": [],
-                "source": "video_keyframe_segmentation",
-            }
 
         analysis.status = "completed"
         analysis.results = analysis_results
@@ -627,18 +672,48 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 if existing.scalar_one_or_none():
                     continue
 
+                # Construir ROI mask para vídeo (mesma lógica das imagens)
+                video_perimeter = image.perimeter_polygon if image.perimeter_polygon else project_perimeter
+                video_roi_mask = None
+                if video_perimeter and len(video_perimeter) >= 3:
+                    try:
+                        # Para vídeo, extrair primeiro frame para dimensões da ROI mask
+                        cap = cv2.VideoCapture(image.file_path)
+                        ret, first_frame = cap.read()
+                        cap.release()
+                        if ret and first_frame is not None:
+                            h, w = first_frame.shape[:2]
+                            pts = np.array(
+                                [[p[0] * w, p[1] * h] for p in video_perimeter],
+                                dtype=np.int32
+                            )
+                            video_roi_mask = np.zeros((h, w), dtype=np.uint8)
+                            cv2.fillPoly(video_roi_mask, [pts], 1)
+                    except Exception:
+                        video_roi_mask = None
+
                 # Criar registro de análise de vídeo
                 analysis = Analysis(
                     analysis_type="video_analysis",
                     status="processing",
                     image_id=video_id,
-                    config={"sample_rate": 30, "max_frames": 50, "auto_triggered": True}
+                    config={
+                        "sample_rate": 30,
+                        "max_frames": 50,
+                        "auto_triggered": True,
+                        "has_perimeter": video_perimeter is not None,
+                        "image_type": image.image_type or "drone",
+                    }
                 )
                 db.add(analysis)
                 await db.commit()
                 await db.refresh(analysis)
 
-                await run_video_analysis(image, analysis, db)
+                await run_video_analysis(
+                    image, analysis, db,
+                    roi_mask=video_roi_mask,
+                    image_type=image.image_type or "drone",
+                )
 
             # Atualizar coordenadas do projeto pelo centroide de todas as imagens com GPS
             all_ids = image_ids + video_ids
@@ -1375,6 +1450,36 @@ async def analyze_project(
             )
             for old_analysis in all_analyses.scalars().all():
                 await db.delete(old_analysis)
+
+            # Se for vídeo, deletar keyframe Image records gerados anteriormente
+            if is_video_file(image.original_filename):
+                kf_images_result = await db.execute(
+                    select(Image).where(Image.source_video_id == image.id)
+                )
+                for kf_img in kf_images_result.scalars().all():
+                    # Deletar análises do keyframe
+                    kf_analyses = await db.execute(
+                        select(Analysis).where(Analysis.image_id == kf_img.id)
+                    )
+                    for kf_a in kf_analyses.scalars().all():
+                        await db.delete(kf_a)
+                    # Deletar arquivos do keyframe
+                    if kf_img.file_path and os.path.exists(kf_img.file_path):
+                        try:
+                            os.remove(kf_img.file_path)
+                        except Exception:
+                            pass
+                    # Deletar thumbnail
+                    try:
+                        thumb_dir = os.path.join(os.path.dirname(kf_img.file_path), "thumbnails")
+                        thumb_name = f"{os.path.splitext(kf_img.filename)[0]}_thumb.jpg"
+                        thumb_path = os.path.join(thumb_dir, thumb_name)
+                        if os.path.exists(thumb_path):
+                            os.remove(thumb_path)
+                    except Exception:
+                        pass
+                    await db.delete(kf_img)
+
             image.status = "uploaded"
         else:
             stale_analyses = await db.execute(
@@ -1395,6 +1500,10 @@ async def analyze_project(
     videos_to_analyze = []
 
     for image in images:
+        # Pular keyframes extraídos de vídeo (são analisados junto com o vídeo pai)
+        if image.source_video_id is not None:
+            continue
+
         if is_image_file(image.original_filename):
             # Verificar se já existe análise completa
             existing_analysis = await db.execute(

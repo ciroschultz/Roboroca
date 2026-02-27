@@ -419,7 +419,8 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
   // Extrair dados ML das análises completas
   const fullAnalysis = analyses.find(a => a.analysis_type === 'full_report')
   const videoAnalysis = analyses.find(a => a.analysis_type === 'video_analysis')
-  const analysisResults = fullAnalysis?.results || {}
+  // Usar fullAnalysis como primário; se não houver (projeto só com vídeo), usar videoAnalysis
+  const analysisResults = fullAnalysis?.results || videoAnalysis?.results || {}
 
   // Dados de segmentação
   const segmentation = analysisResults.segmentation as Record<string, unknown> | undefined
@@ -1166,22 +1167,22 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             <div className="space-y-6">
               {/* Resumo das analises disponíveis */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {fullAnalysis?.results?.vegetation_coverage && (
+                {analysisResults.vegetation_coverage && (
                   <StatCard
                     title="Cobertura Vegetal"
-                    value={Number((fullAnalysis.results.vegetation_coverage as any)?.vegetation_percentage || 0).toFixed(1)}
+                    value={Number((analysisResults.vegetation_coverage as any)?.vegetation_percentage || 0).toFixed(1)}
                     unit="%"
                     icon={<Leaf size={24} />}
                     color="green"
                   />
                 )}
-                {fullAnalysis?.results?.vegetation_health && (
+                {analysisResults.vegetation_health && (
                   <StatCard
                     title="Indice de Saude"
-                    value={Number((fullAnalysis.results.vegetation_health as any)?.health_index || 0).toFixed(1)}
+                    value={Number((analysisResults.vegetation_health as any)?.health_index || 0).toFixed(1)}
                     unit="%"
                     icon={<Thermometer size={24} />}
-                    color={(fullAnalysis.results.vegetation_health as any)?.health_index >= 70 ? 'green' : 'yellow'}
+                    color={(analysisResults.vegetation_health as any)?.health_index >= 70 ? 'green' : 'yellow'}
                   />
                 )}
                 {videoAnalysis?.results?.video_info && (
@@ -1409,7 +1410,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
                     <div className="p-3 bg-gray-800/30 rounded-lg">
                       <p className="text-xs text-gray-500">Tempo de Processamento</p>
                       <p className="text-lg font-bold text-[#6AAF3D]">
-                        {fullAnalysis?.processing_time_seconds ? `${fullAnalysis.processing_time_seconds.toFixed(1)}s` : 'N/A'}
+                        {(fullAnalysis || videoAnalysis)?.processing_time_seconds ? `${((fullAnalysis || videoAnalysis)!.processing_time_seconds!).toFixed(1)}s` : 'N/A'}
                       </p>
                     </div>
                     <div className="p-3 bg-gray-800/30 rounded-lg">
