@@ -67,7 +67,15 @@
       "Bash(powershell -Command:*)",
       "Bash(cd \"C:\\\\Users\\\\Ciro\\\\Roboroça\" && uvicorn backend.main:app --reload --port 8000 2>&1)",
       "Bash(cd:*)",
-      "Bash(cd C:\\\\Users\\\\Ciro\\\\Roboroça:*)"
+      "Bash(cd C:\\\\Users\\\\Ciro\\\\Roboroça:*)",
+      "Bash(ls:*)",
+      "Bash(echo TOKEN: ${TOKEN:0:20}...:*)",
+      "Bash(rm:*)",
+      "Bash(grep:*)",
+      "Bash(npx next:*)",
+      "Bash(npx:*)",
+      "Bash(# Find all python/uvicorn processes wmic process where \"\"name=''python.exe''\"\" get ProcessId,CommandLine)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)"
     ]
   }
 }

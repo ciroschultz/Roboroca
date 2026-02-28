@@ -43,10 +43,13 @@ def count_trees_by_segmentation(
         Dicionário com contagem e estatísticas das árvores
     """
     # Thresholds adaptativos para satélite (~1m/pixel vs drone ~3cm/pixel)
+    # Imagens de tile services (Esri/OSM) têm cores mais saturadas e contraste
+    # artificial, então precisamos de thresholds mais restritivos para evitar
+    # contar vegetação rasteira/grama como árvores individuais.
     if image_type == "satellite":
-        min_tree_area = 8       # árvore pequena ~3x3 pixels a 1m/pixel
-        max_tree_area = 50000   # grupos de árvores grandes
-        kernel_size = 3         # erosão menor para não destruir árvores pequenas
+        min_tree_area = 20      # árvore mínima ~4.5x4.5 pixels (~4.5m diâmetro a 1m/pixel)
+        max_tree_area = 5000    # limite superior (evitar contar áreas grandes como 1 árvore)
+        kernel_size = 5         # kernel maior para separar copas conectadas
     # Carregar imagem
     with Image.open(image_path) as img:
         if img.mode != 'RGB':
@@ -87,8 +90,9 @@ def count_trees_by_segmentation(
     if exg_threshold is None:
         exg_threshold = np.percentile(exg, 70)
         if image_type == "satellite":
-            # Faixa mais permissiva para satélite (pixels mistos, resolução menor)
-            exg_threshold = max(0.3, min(0.55, exg_threshold))
+            # Faixa mais restritiva para satélite — tile services têm cores
+            # artificialmente saturadas, threshold permissivo gera falsos positivos
+            exg_threshold = max(0.45, min(0.65, exg_threshold))
         else:
             # Faixa padrão para drone (alta resolução)
             exg_threshold = max(0.5, min(0.7, exg_threshold))
@@ -99,8 +103,9 @@ def count_trees_by_segmentation(
     # Operações morfológicas para separar árvores individuais
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
 
-    # Erosão para separar árvores conectadas (menos agressiva para satélite)
-    erosion_iters = 1 if image_type == "satellite" else 2
+    # Erosão para separar árvores conectadas
+    # Satélite precisa de mais erosão para quebrar vegetação contínua em copas individuais
+    erosion_iters = 2 if image_type == "satellite" else 2
     eroded = cv2.erode(vegetation_mask, kernel, iterations=erosion_iters)
 
     # Dilatação para restaurar tamanho aproximado

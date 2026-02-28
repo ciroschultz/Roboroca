@@ -1024,7 +1024,12 @@ async def get_projects_comparison_detailed(
     projects_data = []
 
     for project in projects:
-        image_count = len(project.images) if project.images else 0
+        # Count only spatial images (exclude videos and keyframes)
+        image_count = len([
+            img for img in (project.images or [])
+            if getattr(img, 'image_type', None) != 'keyframe'
+            and not (img.mime_type or '').startswith('video/')
+        ])
 
         # Buscar todas as análises completas (full_report + roi_analysis)
         analyses_result = await db.execute(
@@ -1186,7 +1191,7 @@ async def get_projects_comparison_detailed(
             "name": project.name,
             "status": project.status or "pending",
             "image_count": image_count,
-            "total_area_ha": round(project.total_area_ha, 2) if project.total_area_ha else 0.0,
+            "total_area_ha": round(project.total_area_ha, 2) if project.total_area_ha and image_count > 0 else 0.0,
             "created_at": project.created_at.isoformat() if project.created_at else None,
             "vegetation_coverage": {
                 "percentage": safe_avg(vegetation_percentages),
@@ -1624,6 +1629,32 @@ def get_image_gsd_from_xmp(file_path: str) -> float | None:
         return None
 
 
+def _get_best_gsd(img) -> float:
+    """
+    Obter o melhor GSD disponível para uma imagem, em metros/pixel.
+
+    Prioridade:
+    1. image.resolution (salvo pelo serviço de captura — preciso para satélite)
+    2. XMP metadata (preciso para drones com altitude conhecida)
+    3. Fallback por tipo de imagem
+    """
+    # 1. Campo resolution do banco (calculado pelo serviço de captura satelital)
+    if getattr(img, 'resolution', None) and img.resolution > 0:
+        return img.resolution
+
+    # 2. XMP metadata (drones DJI)
+    if hasattr(img, 'file_path') and img.file_path:
+        gsd_xmp = get_image_gsd_from_xmp(img.file_path)
+        if gsd_xmp:
+            return gsd_xmp
+
+    # 3. Fallback por tipo de imagem
+    image_type = getattr(img, 'image_type', 'drone') or 'drone'
+    if image_type == 'satellite':
+        return 1.0   # ~1 m/pixel típico para tile services (Esri zoom 17)
+    return 0.03       # ~3 cm/pixel típico para drone a ~100m
+
+
 def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = None) -> float:
     """
     Calcular área em hectares baseada no bounding box das coordenadas GPS.
@@ -1639,20 +1670,25 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
 
     # Se temos imagens mas sem GPS, tentar estimar pela dimensão
     if not images_with_gps and all_images:
+        # Filter out videos and keyframes — they don't have real spatial data
+        spatial_images = [
+            img for img in all_images
+            if getattr(img, 'image_type', None) != 'keyframe'
+            and not (img.mime_type or '').startswith('video/')
+        ]
+        if not spatial_images:
+            return 0.0
         total_area_ha = 0.0
-        for img in all_images:
+        for img in spatial_images:
             if img.width and img.height:
-                # Tentar obter GSD real dos metadados XMP
-                gsd_m = get_image_gsd_from_xmp(img.file_path) if hasattr(img, 'file_path') else None
-                if not gsd_m:
-                    gsd_m = 0.03  # Fallback: 3cm/pixel (drone a ~100m)
+                gsd_m = _get_best_gsd(img)
 
                 width_m = img.width * gsd_m
                 height_m = img.height * gsd_m
                 area_m2 = width_m * height_m
                 area_ha = area_m2 / 10000
                 total_area_ha += area_ha
-        return max(round(total_area_ha, 2), 0.5)
+        return max(round(total_area_ha, 2), 0.01)
 
     lats = [img.center_lat for img in images_with_gps]
     lons = [img.center_lon for img in images_with_gps]
@@ -1664,16 +1700,13 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
     if min_lat == max_lat and min_lon == max_lon:
         img = images_with_gps[0]
         if img.width and img.height:
-            # Tentar obter GSD real dos metadados XMP
-            gsd_m = get_image_gsd_from_xmp(img.file_path) if hasattr(img, 'file_path') else None
-            if not gsd_m:
-                gsd_m = 0.03  # Fallback: 3cm/pixel
+            gsd_m = _get_best_gsd(img)
 
             width_m = img.width * gsd_m
             height_m = img.height * gsd_m
             area_m2 = width_m * height_m
             area_ha = area_m2 / 10000
-            return max(round(area_ha, 2), 0.5)
+            return max(round(area_ha, 2), 0.01)
         return 1.0
 
     # Conversão de graus para metros (aproximação)
@@ -1732,15 +1765,22 @@ async def get_project_analysis_summary(
     all_images = images_result.scalars().all()
     total_images = len(all_images)
 
+    # Filter out videos and keyframes for area calculation (no real spatial data)
+    spatial_images = [
+        img for img in all_images
+        if getattr(img, 'image_type', None) != 'keyframe'
+        and not (img.mime_type or '').startswith('video/')
+    ]
+
     # Calcular área do bounding box GPS (ou estimar pelas dimensões da imagem)
-    images_with_gps = [img for img in all_images if img.center_lat and img.center_lon]
-    calculated_area_ha = calculate_bounding_box_area_ha(images_with_gps, all_images)
+    images_with_gps = [img for img in spatial_images if img.center_lat and img.center_lon]
+    calculated_area_ha = calculate_bounding_box_area_ha(images_with_gps, spatial_images)
 
-    # Usar área do projeto se definida, senão usar calculada
-    total_area_ha = project.total_area_ha if project.total_area_ha else calculated_area_ha
+    # Sempre usar a área recalculada (corrige valores stale de GSD errado)
+    total_area_ha = calculated_area_ha if calculated_area_ha > 0 else (project.total_area_ha or 0.0)
 
-    # Atualizar área do projeto se não estiver definida
-    if not project.total_area_ha and calculated_area_ha > 0:
+    # Atualizar área do projeto se mudou
+    if calculated_area_ha > 0 and (not project.total_area_ha or abs(project.total_area_ha - calculated_area_ha) > 0.01):
         project.total_area_ha = calculated_area_ha
         await db.commit()
 
@@ -1761,7 +1801,8 @@ async def get_project_analysis_summary(
     land_use_totals = {}
     segmentation_totals = {}
     vegetation_types = {}
-    total_objects_detected = 0
+    total_yolo_detections = 0
+    total_tree_count = 0
     objects_by_class = {}
     biomass_indices = []
     pest_infection_rates = []
@@ -1835,21 +1876,20 @@ async def get_project_analysis_summary(
                 vtype = veg_type['vegetation_type']
                 vegetation_types[vtype] = vegetation_types.get(vtype, 0) + 1
 
-        # Detecção de objetos (YOLO ou segmentação de árvores)
+        # Detecção de objetos (YOLO)
         if 'object_detection' in results:
             det = results['object_detection']
             if det.get('total_detections'):
-                total_objects_detected += det['total_detections']
+                total_yolo_detections += det['total_detections']
             if det.get('by_class'):
                 for cls, count in det['by_class'].items():
                     objects_by_class[cls] = objects_by_class.get(cls, 0) + count
 
-        # Contagem de árvores por segmentação (backup se YOLO não detectar)
-        if 'tree_count' in results and total_objects_detected == 0:
+        # Contagem de árvores por segmentação (acumula separadamente)
+        if 'tree_count' in results:
             tree_data = results['tree_count']
             if tree_data.get('total_trees'):
-                total_objects_detected += tree_data['total_trees']
-                objects_by_class['arvore'] = objects_by_class.get('arvore', 0) + tree_data['total_trees']
+                total_tree_count += tree_data['total_trees']
 
         # Biomassa
         if 'biomass' in results:
@@ -1902,8 +1942,8 @@ async def get_project_analysis_summary(
         "critical_percentage": round(avg_critical, 2),
 
         # Detecções YOLO agregadas
-        "total_objects_detected": total_objects_detected,
-        "objects_by_class": objects_by_class,
+        "total_objects_detected": total_yolo_detections if total_yolo_detections > 0 else total_tree_count,
+        "objects_by_class": objects_by_class if total_yolo_detections > 0 else ({"arvore": total_tree_count} if total_tree_count > 0 else objects_by_class),
 
         # Classificação de uso do solo
         "land_use_summary": land_use_summary,
