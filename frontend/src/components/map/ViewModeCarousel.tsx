@@ -14,6 +14,7 @@ const VIEW_MODES: ViewMode[] = [
   { id: 'trees', label: 'Arvores', activeLayers: ['original', 'trees'] },
   { id: 'pests', label: 'Pragas', activeLayers: ['original', 'pests'] },
   { id: 'composite', label: 'Composicao', activeLayers: ['original', 'vegetation', 'trees', 'pests'] },
+  { id: 'zones', label: 'Zonas', activeLayers: ['original'] },
 ]
 
 interface ViewModeCarouselProps {

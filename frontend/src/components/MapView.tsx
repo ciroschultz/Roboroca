@@ -60,6 +60,9 @@ import ScaleBar from '@/components/map/ScaleBar'
 import CoordinateGrid from '@/components/map/CoordinateGrid'
 import LegendPanel from '@/components/map/LegendPanel'
 import ViewModeCarousel from '@/components/map/ViewModeCarousel'
+import ZonePropertiesDialog, { type ZoneFormData } from '@/components/map/ZonePropertiesDialog'
+import ZoneLayerItem, { type ZoneData } from '@/components/map/ZoneLayerItem'
+import { Hexagon } from 'lucide-react'
 
 type MapMode = 'project'
 
@@ -134,7 +137,7 @@ interface ImageAnalysis {
   }
 }
 
-type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser' | 'roi'
+type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser' | 'roi' | 'zone' | 'rectangle'
 
 interface Annotation {
   id?: number
@@ -231,6 +234,17 @@ export default function MapView({ projectId }: MapViewProps) {
   const [showColorPicker, setShowColorPicker] = useState(false)
   const colorPickerRef = useRef<HTMLDivElement>(null)
 
+  // Zone states
+  const [zones, setZones] = useState<ZoneData[]>([])
+  const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null)
+  const [zoneAnalyzing, setZoneAnalyzing] = useState<Set<number>>(new Set())
+  const [zoneVisibility, setZoneVisibility] = useState<Record<number, boolean>>({})
+  const [editingVertices, setEditingVertices] = useState(false)
+  const [showZoneDialog, setShowZoneDialog] = useState(false)
+  const [pendingZonePoints, setPendingZonePoints] = useState<number[][] | null>(null)
+  const [draggingVertex, setDraggingVertex] = useState<{ zoneId: number; vertexIndex: number } | null>(null)
+  const [rectangleStart, setRectangleStart] = useState<{ x: number; y: number } | null>(null)
+
   // Fullscreen
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -272,6 +286,8 @@ export default function MapView({ projectId }: MapViewProps) {
     'measurement': 'Clique no ponto inicial, depois no ponto final para medir',
     'eraser': 'Clique em uma anotacao para remove-la',
     'roi': 'Desenhe o perimetro da area de interesse. Duplo-clique para fechar. ESC para cancelar',
+    'zone': 'Clique para adicionar vertices da zona. Duplo-clique para fechar e definir propriedades',
+    'rectangle': 'Clique no primeiro canto, depois no canto oposto para criar zona retangular',
   }
 
   // Colors for annotations
@@ -410,18 +426,21 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }
 
-  // Fetch annotations for image
+  // Fetch annotations for image (separating zones from regular annotations)
   const fetchAnnotations = async (imageId: number) => {
     try {
       const data = await apiGetAnnotations(imageId)
-      setAnnotations(data.annotations?.map((a: any) => ({
+      const all = data.annotations || []
+      setAnnotations(all.filter((a: any) => a.annotation_type !== 'zone').map((a: any) => ({
         id: a.id,
         type: a.annotation_type,
         data: a.data,
-      })) || [])
+      })))
+      setZones(all.filter((a: any) => a.annotation_type === 'zone') as unknown as ZoneData[])
     } catch (err) {
       console.error('Erro ao carregar anotacoes:', err)
       setAnnotations([])
+      setZones([])
     }
   }
 
@@ -503,6 +522,141 @@ export default function MapView({ projectId }: MapViewProps) {
     setCurrentAnnotation(null)
   }
 
+  // Zone: save from dialog
+  const handleSaveZone = async (formData: ZoneFormData) => {
+    if (!projectImages[selectedImageIndex]) return
+    setShowZoneDialog(false)
+    try {
+      const saved = await apiCreateAnnotation(
+        projectImages[selectedImageIndex].id,
+        'zone',
+        formData as unknown as Record<string, unknown>,
+      )
+      setZones(prev => [...prev, saved as unknown as ZoneData])
+      setZoneVisibility(prev => ({ ...prev, [saved.id]: true }))
+      setPendingZonePoints(null)
+      setActiveTool('select')
+    } catch (err) {
+      console.error('Erro ao salvar zona:', err)
+    }
+  }
+
+  // Zone: cancel dialog
+  const handleCancelZoneDialog = () => {
+    setShowZoneDialog(false)
+    setPendingZonePoints(null)
+  }
+
+  // Zone: analyze using ROI API
+  const analyzeZone = async (zone: ZoneData) => {
+    if (!projectImages[selectedImageIndex]) return
+    setZoneAnalyzing(prev => new Set(prev).add(zone.id))
+    try {
+      const result = await analyzeROI(
+        projectImages[selectedImageIndex].id,
+        zone.data.points,
+        ['vegetation', 'health', 'plant_count', 'pest_disease', 'biomass'],
+      )
+      const analysisResults = (result.results || result) as any
+      const updatedData = { ...zone.data, analysis_results: analysisResults }
+      await apiUpdateAnnotation(zone.id, { data: updatedData as unknown as Record<string, unknown> })
+      setZones(prev => prev.map(z => z.id === zone.id ? { ...z, data: updatedData } as ZoneData : z))
+    } catch (err) {
+      console.error('Erro ao analisar zona:', err)
+    } finally {
+      setZoneAnalyzing(prev => { const s = new Set(prev); s.delete(zone.id); return s })
+    }
+  }
+
+  // Zone: analyze all
+  const analyzeAllZones = async () => {
+    for (const zone of zones) {
+      if (!zone.data.analysis_results) {
+        await analyzeZone(zone)
+      }
+    }
+  }
+
+  // Zone: delete
+  const deleteZone = async (zoneId: number) => {
+    try {
+      await deleteAnnotationApi(zoneId)
+      setZones(prev => prev.filter(z => z.id !== zoneId))
+      if (selectedZoneId === zoneId) {
+        setSelectedZoneId(null)
+        setEditingVertices(false)
+      }
+    } catch (err) {
+      console.error('Erro ao excluir zona:', err)
+    }
+  }
+
+  // Zone: toggle visibility
+  const toggleZoneVisibility = (zoneId: number) => {
+    setZoneVisibility(prev => ({ ...prev, [zoneId]: !(prev[zoneId] ?? true) }))
+  }
+
+  // Zone: edit (open dialog with existing data)
+  const editZone = (zone: ZoneData) => {
+    setPendingZonePoints(zone.data.points)
+    setShowZoneDialog(true)
+    // Store zone id to update instead of create
+    setSelectedZoneId(zone.id)
+  }
+
+  // Zone: update from edit dialog
+  const handleUpdateZone = async (formData: ZoneFormData) => {
+    if (!selectedZoneId) {
+      handleSaveZone(formData)
+      return
+    }
+    setShowZoneDialog(false)
+    try {
+      await apiUpdateAnnotation(selectedZoneId, { data: formData as unknown as Record<string, unknown> })
+      setZones(prev => prev.map(z => z.id === selectedZoneId ? { ...z, data: { ...z.data, ...formData } } : z))
+      setPendingZonePoints(null)
+      setSelectedZoneId(null)
+    } catch (err) {
+      console.error('Erro ao atualizar zona:', err)
+    }
+  }
+
+  // Zone: vertex drag handlers
+  const handleVertexMouseDown = (zoneId: number, vertexIndex: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setDraggingVertex({ zoneId, vertexIndex })
+  }
+
+  const handleVertexMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!draggingVertex) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    setZones(prev => prev.map(z => {
+      if (z.id !== draggingVertex.zoneId) return z
+      const newPoints = [...z.data.points]
+      newPoints[draggingVertex.vertexIndex] = [x, y]
+      return { ...z, data: { ...z.data, points: newPoints } }
+    }))
+  }, [draggingVertex])
+
+  const handleVertexMouseUp = useCallback(async () => {
+    if (!draggingVertex) return
+    const zone = zones.find(z => z.id === draggingVertex.zoneId)
+    if (zone) {
+      try {
+        const areaM2 = calculatePolygonArea(zone.data.points)
+        const updatedData = { ...zone.data, area_m2: areaM2, area_ha: areaM2 / 10000 }
+        await apiUpdateAnnotation(zone.id, { data: updatedData as unknown as Record<string, unknown> })
+        setZones(prev => prev.map(z => z.id === zone.id ? { ...z, data: updatedData } : z))
+      } catch (err) {
+        console.error('Erro ao salvar vertices:', err)
+      }
+    }
+    setDraggingVertex(null)
+  }, [draggingVertex, zones])
+
   // Analyze full project
   const handleAnalyzeProject = async () => {
     const pid = selectedProject?.id || projectId
@@ -562,6 +716,41 @@ export default function MapView({ projectId }: MapViewProps) {
       return
     }
 
+    if (activeTool === 'zone') {
+      if (!currentAnnotation) {
+        setCurrentAnnotation({
+          type: 'zone',
+          data: { points: [[x, y]], color: selectedColor },
+          isNew: true,
+        })
+      } else if (currentAnnotation.type === 'zone' && currentAnnotation.data.points) {
+        const points = [...currentAnnotation.data.points, [x, y]]
+        setCurrentAnnotation({
+          ...currentAnnotation,
+          data: { ...currentAnnotation.data, points },
+        })
+      }
+      return
+    }
+
+    if (activeTool === 'rectangle') {
+      if (!rectangleStart) {
+        setRectangleStart({ x, y })
+      } else {
+        // Second click = opposite corner → create rectangle zone
+        const x1 = Math.min(rectangleStart.x, x)
+        const y1 = Math.min(rectangleStart.y, y)
+        const x2 = Math.max(rectangleStart.x, x)
+        const y2 = Math.max(rectangleStart.y, y)
+        const rectPoints: number[][] = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+        const areaM2 = calculatePolygonArea(rectPoints)
+        setPendingZonePoints(rectPoints)
+        setShowZoneDialog(true)
+        setRectangleStart(null)
+      }
+      return
+    }
+
     if (activeTool === 'point') {
       const newAnnotation: Annotation = {
         type: 'point',
@@ -613,8 +802,16 @@ export default function MapView({ projectId }: MapViewProps) {
     }
   }
 
-  // Handle double click to finish polygon or ROI
+  // Handle double click to finish polygon, ROI, or zone
   const handleCanvasDoubleClick = () => {
+    // Finish Zone polygon
+    if (activeTool === 'zone' && currentAnnotation && currentAnnotation.type === 'zone' && currentAnnotation.data.points && currentAnnotation.data.points.length >= 3) {
+      setPendingZonePoints(currentAnnotation.data.points)
+      setShowZoneDialog(true)
+      setCurrentAnnotation(null)
+      return
+    }
+
     // Finish ROI polygon
     if (activeTool === 'roi' && currentAnnotation && currentAnnotation.type === 'roi' && currentAnnotation.data.points && currentAnnotation.data.points.length >= 3) {
       setRoiPolygon(currentAnnotation.data.points)
@@ -869,13 +1066,17 @@ export default function MapView({ projectId }: MapViewProps) {
         const full = data.analyses?.find((a: Analysis) => a.analysis_type === 'full_report' && a.status === 'completed')
         setFullReportData(full?.results as Record<string, unknown> || null)
       }).catch(() => setFullReportData(null))
-      // Reset ROI on image change
+      // Reset ROI + zones on image change
       setRoiPolygon(null)
       setRoiResults(null)
+      setSelectedZoneId(null)
+      setEditingVertices(false)
+      setDraggingVertex(null)
     } else {
       setCurrentImageUrl(null)
       setImageAnalysis(null)
       setAnnotations([])
+      setZones([])
       setImageGSD(null)
       setUtmInfo(null)
       setFullReportData(null)
@@ -1089,6 +1290,22 @@ export default function MapView({ projectId }: MapViewProps) {
                       >
                         <Target size={18} />
                       </button>
+                      <div className="w-px h-6 bg-gray-600 mx-0.5" />
+                      <button
+                        onClick={() => { setActiveTool('zone'); setRectangleStart(null) }}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'zone' ? 'bg-orange-500 text-white' : 'text-orange-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Desenhar zona de cultivo (poligono)"
+                      >
+                        <Hexagon size={18} />
+                      </button>
+                      <button
+                        onClick={() => { setActiveTool('rectangle'); setRectangleStart(null) }}
+                        className={`p-2 rounded-lg transition-colors ${activeTool === 'rectangle' ? 'bg-orange-500 text-white' : 'text-orange-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Desenhar zona retangular"
+                      >
+                        <Square size={18} />
+                      </button>
+                      <div className="w-px h-6 bg-gray-600 mx-0.5" />
                       <button
                         onClick={() => setActiveTool('measurement')}
                         className={`p-2 rounded-lg transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
@@ -1335,10 +1552,10 @@ export default function MapView({ projectId }: MapViewProps) {
                     onClick={handleCanvasClick}
                     onDoubleClick={handleCanvasDoubleClick}
                     onMouseDown={handlePanStart}
-                    onMouseMove={handlePanMove}
-                    onMouseUp={handlePanEnd}
-                    onMouseLeave={handlePanEnd}
-                    style={{ cursor: activeTool === 'select' ? (isPanning ? 'grabbing' : 'grab') : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
+                    onMouseMove={(e) => { draggingVertex ? handleVertexMouseMove(e) : handlePanMove(e) }}
+                    onMouseUp={() => { draggingVertex ? handleVertexMouseUp() : handlePanEnd() }}
+                    onMouseLeave={() => { if (draggingVertex) handleVertexMouseUp(); handlePanEnd() }}
+                    style={{ cursor: draggingVertex ? 'grabbing' : activeTool === 'select' ? (isPanning ? 'grabbing' : 'grab') : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
                   >
                     <div
                       className="relative min-w-full min-h-full"
@@ -1718,6 +1935,121 @@ export default function MapView({ projectId }: MapViewProps) {
                           strokeDasharray="8,4"
                         />
                       )}
+                      {/* Zona em progresso */}
+                      {currentAnnotation?.type === 'zone' && currentAnnotation.data.points && currentAnnotation.data.points.length > 0 && (
+                        <polyline
+                          points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
+                          fill="none"
+                          stroke="#FF6B35"
+                          strokeWidth={2.5}
+                          strokeDasharray="6,3"
+                        />
+                      )}
+                      {/* Retangulo em progresso */}
+                      {activeTool === 'rectangle' && rectangleStart && (
+                        <circle cx={rectangleStart.x} cy={rectangleStart.y} r={5} fill="#FF6B35" stroke="white" strokeWidth={2} />
+                      )}
+
+                      {/* Zonas de cultivo salvas */}
+                      {(activeViewMode === 'zones' || activeViewMode === 'original' || activeViewMode === 'composite') && (
+                        <>
+                          {/* SVG defs for hatch patterns */}
+                          <defs>
+                            {zones.map(zone => (
+                              zone.data.pattern === 'hatched' && (
+                                <pattern key={`hatch-${zone.id}`} id={`hatch-${zone.id}`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                                  <line x1="0" y1="0" x2="0" y2="8" stroke={zone.data.color} strokeWidth="2" />
+                                </pattern>
+                              )
+                            ))}
+                            {zones.map(zone => (
+                              zone.data.pattern === 'dashed' && (
+                                <pattern key={`dash-${zone.id}`} id={`dash-${zone.id}`} width="12" height="12" patternUnits="userSpaceOnUse">
+                                  <rect x="0" y="0" width="6" height="6" fill={zone.data.color} opacity={zone.data.fill_opacity} />
+                                </pattern>
+                              )
+                            ))}
+                          </defs>
+                          {zones.map(zone => {
+                            if (!(zoneVisibility[zone.id] ?? true)) return null
+                            const pts = zone.data.points
+                            if (!pts || pts.length < 3) return null
+                            const svgPts = pts.map(p => p.join(',')).join(' ')
+                            const isSelected = selectedZoneId === zone.id
+                            const centroid = calculatePolygonCentroid(pts)
+                            const fillValue = zone.data.pattern === 'hatched'
+                              ? `url(#hatch-${zone.id})`
+                              : zone.data.pattern === 'dashed'
+                              ? `url(#dash-${zone.id})`
+                              : zone.data.color
+                            return (
+                              <g key={`zone-${zone.id}`}>
+                                <polygon
+                                  points={svgPts}
+                                  fill={fillValue}
+                                  fillOpacity={zone.data.pattern === 'solid' ? zone.data.fill_opacity : 1}
+                                  stroke={zone.data.color}
+                                  strokeWidth={isSelected ? 3 : 2}
+                                  style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedZoneId(isSelected ? null : zone.id)
+                                    setEditingVertices(false)
+                                  }}
+                                />
+                                {/* Label at centroid */}
+                                <rect
+                                  x={centroid.x - 40}
+                                  y={centroid.y - 10}
+                                  width={80}
+                                  height={20}
+                                  fill="rgba(0,0,0,0.75)"
+                                  rx={4}
+                                  style={{ pointerEvents: 'none' }}
+                                />
+                                <text
+                                  x={centroid.x}
+                                  y={centroid.y + 5}
+                                  fill="white"
+                                  fontSize={11}
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                  style={{ pointerEvents: 'none' }}
+                                >
+                                  {zone.data.label.length > 12 ? zone.data.label.substring(0, 12) + '...' : zone.data.label}
+                                </text>
+                                {/* Draggable vertices when selected + editing */}
+                                {isSelected && editingVertices && pts.map((p, vi) => (
+                                  <circle
+                                    key={`vertex-${zone.id}-${vi}`}
+                                    cx={p[0]}
+                                    cy={p[1]}
+                                    r={7}
+                                    fill="white"
+                                    stroke={zone.data.color}
+                                    strokeWidth={2}
+                                    style={{ pointerEvents: 'auto', cursor: draggingVertex ? 'grabbing' : 'grab' }}
+                                    onMouseDown={(e) => handleVertexMouseDown(zone.id, vi, e)}
+                                  />
+                                ))}
+                                {/* Static vertices when selected but not editing */}
+                                {isSelected && !editingVertices && pts.map((p, vi) => (
+                                  <circle
+                                    key={`svertex-${zone.id}-${vi}`}
+                                    cx={p[0]}
+                                    cy={p[1]}
+                                    r={5}
+                                    fill="white"
+                                    stroke={zone.data.color}
+                                    strokeWidth={2}
+                                    style={{ pointerEvents: 'none' }}
+                                  />
+                                ))}
+                              </g>
+                            )
+                          })}
+                        </>
+                      )}
                     </svg>
                     </div>{/* end zoomable wrapper */}
                   </div>
@@ -2052,6 +2384,73 @@ export default function MapView({ projectId }: MapViewProps) {
                   })}
                 </div>
 
+                {/* Zonas de Cultivo */}
+                <div className="mt-4 pt-4 border-t border-gray-700/50">
+                  <div className="flex items-center justify-between mb-2">
+                    <h5 className="text-white text-sm font-medium flex items-center gap-2">
+                      <Hexagon size={14} className="text-orange-400" />
+                      Zonas de Cultivo
+                      {zones.length > 0 && (
+                        <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded-full">
+                          {zones.length}
+                        </span>
+                      )}
+                    </h5>
+                  </div>
+                  {zones.length === 0 ? (
+                    <p className="text-gray-500 text-xs mb-2">
+                      Use a ferramenta <Hexagon size={12} className="inline text-orange-400" /> para desenhar zonas
+                    </p>
+                  ) : (
+                    <div className="space-y-1 mb-2">
+                      {zones.map(zone => (
+                        <ZoneLayerItem
+                          key={zone.id}
+                          zone={zone}
+                          isSelected={selectedZoneId === zone.id}
+                          isVisible={zoneVisibility[zone.id] ?? true}
+                          isAnalyzing={zoneAnalyzing.has(zone.id)}
+                          onSelect={() => {
+                            setSelectedZoneId(selectedZoneId === zone.id ? null : zone.id)
+                            setEditingVertices(false)
+                          }}
+                          onToggleVisibility={() => toggleZoneVisibility(zone.id)}
+                          onAnalyze={() => analyzeZone(zone)}
+                          onEdit={() => editZone(zone)}
+                          onDelete={() => deleteZone(zone.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* Edit vertices button when zone selected */}
+                  {selectedZoneId && (
+                    <button
+                      onClick={() => setEditingVertices(!editingVertices)}
+                      className={`w-full mb-2 px-3 py-1.5 text-xs rounded-lg transition-colors flex items-center justify-center gap-1 ${
+                        editingVertices
+                          ? 'bg-orange-500/20 border border-orange-500/40 text-orange-400'
+                          : 'bg-gray-800/50 border border-gray-700/50 text-gray-400 hover:bg-gray-700/50'
+                      }`}
+                    >
+                      {editingVertices ? 'Finalizar Edicao' : 'Editar Vertices'}
+                    </button>
+                  )}
+                  {/* Analyze all button */}
+                  {zones.length > 0 && zones.some(z => !z.data.analysis_results) && (
+                    <button
+                      onClick={analyzeAllZones}
+                      disabled={zoneAnalyzing.size > 0}
+                      className="w-full px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-400 text-xs rounded-lg transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                    >
+                      {zoneAnalyzing.size > 0 ? (
+                        <><Loader2 size={12} className="animate-spin" /> Analisando...</>
+                      ) : (
+                        <><Play size={12} /> Analisar Todas as Zonas</>
+                      )}
+                    </button>
+                  )}
+                </div>
+
                 {/* Informações de análise do projeto */}
                 <div className="mt-6 pt-4 border-t border-gray-700/50">
                   <h5 className="text-white text-sm font-medium mb-3 flex items-center gap-2">
@@ -2150,6 +2549,16 @@ export default function MapView({ projectId }: MapViewProps) {
             </>
           )}
         </div>
+      )}
+      {/* Zone Properties Dialog */}
+      {showZoneDialog && pendingZonePoints && (
+        <ZonePropertiesDialog
+          points={pendingZonePoints}
+          areaM2={calculatePolygonArea(pendingZonePoints)}
+          initialData={selectedZoneId ? zones.find(z => z.id === selectedZoneId)?.data : undefined}
+          onSave={selectedZoneId ? handleUpdateZone : handleSaveZone}
+          onCancel={handleCancelZoneDialog}
+        />
       )}
     </div>
   )

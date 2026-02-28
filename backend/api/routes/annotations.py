@@ -121,7 +121,7 @@ async def create_annotation(
         )
 
     # Validar tipo de anotacao
-    valid_types = ['point', 'polygon', 'measurement', 'circle', 'rectangle']
+    valid_types = ['point', 'polygon', 'measurement', 'circle', 'rectangle', 'zone']
     if annotation_data.annotation_type not in valid_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -305,7 +305,7 @@ async def update_annotation(
     if update_data.data is not None:
         annotation.data = update_data.data
     if update_data.annotation_type is not None:
-        valid_types = ['point', 'polygon', 'measurement', 'circle', 'rectangle']
+        valid_types = ['point', 'polygon', 'measurement', 'circle', 'rectangle', 'zone']
         if update_data.annotation_type not in valid_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -543,6 +543,24 @@ def _annotation_to_feature(ann, img, use_gps: bool) -> dict | None:
             return {
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": coord},
+                "properties": properties,
+            }
+
+    elif ann.annotation_type == "zone":
+        points = data.get("points", [])
+        if len(points) >= 3:
+            coords = [to_coord(p[0], p[1]) for p in points]
+            coords.append(coords[0])  # Close the ring
+            properties["area_m2"] = data.get("area_m2")
+            properties["area_ha"] = data.get("area_ha")
+            properties["crop_type"] = data.get("crop_type")
+            properties["fill_opacity"] = data.get("fill_opacity")
+            properties["pattern"] = data.get("pattern")
+            if data.get("analysis_results"):
+                properties["analysis_results"] = data["analysis_results"]
+            return {
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
                 "properties": properties,
             }
 
