@@ -6,9 +6,10 @@ BASE_URL = "http://localhost:8000"
 
 def create_user():
     response = requests.post(
-        f"{BASE_URL}/api/auth/register",
+        f"{BASE_URL}/api/v1/auth/register",
         json={
             "email": "flavio@gmail.com",
+            "username": "flavio",
             "password": "flavio123",
             "full_name": "Flavio",
         },
