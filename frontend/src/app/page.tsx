@@ -139,7 +139,7 @@ export default function Home() {
     }
     checkAuth()
 
-    // Timeout de segurança: se o loading demorar mais de 15s, liberar a tela
+    // Timeout de segurança: se o loading demorar mais de 5s, liberar a tela
     const safetyTimeout = setTimeout(() => {
       setIsLoading(prev => {
         if (prev) {
@@ -148,7 +148,7 @@ export default function Home() {
         }
         return prev
       })
-    }, 15000)
+    }, 5000)
     return () => clearTimeout(safetyTimeout)
   }, [])
 

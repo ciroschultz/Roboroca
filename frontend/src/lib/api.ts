@@ -68,13 +68,28 @@ async function apiRequest<T>(
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...getHeaders(!options.headers),
-      ...options.headers,
-    },
-  })
+  // Timeout de 10s para evitar travamento quando backend está offline
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...getHeaders(!options.headers),
+        ...options.headers,
+      },
+    })
+  } catch (err: any) {
+    clearTimeout(timeoutId)
+    if (err.name === 'AbortError') {
+      throw new ApiError(0, 'Tempo limite excedido — verifique se o servidor está rodando')
+    }
+    throw new ApiError(0, 'Erro de conexão — servidor indisponível')
+  }
+  clearTimeout(timeoutId)
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido' }))
