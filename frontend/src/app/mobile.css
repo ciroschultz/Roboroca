@@ -1,0 +1,107 @@
+/* ===========================================
+   Roboroça - Mobile Optimizations
+   =========================================== */
+
+/* Touch-friendly targets (minimum 44px) */
+@media (max-width: 768px) {
+  /* Navigation */
+  nav button,
+  nav a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Sidebar collapses to bottom sheet */
+  .sidebar-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: 50vh;
+    overflow-y: auto;
+    border-radius: 16px 16px 0 0;
+    z-index: 50;
+  }
+
+  /* Map toolbar: horizontal at bottom */
+  .map-toolbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    flex-direction: row;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+    z-index: 40;
+  }
+
+  /* Cards stack vertically */
+  .grid-cols-2,
+  .grid-cols-3,
+  .grid-cols-4 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Modals: full screen on mobile */
+  .modal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Text sizing */
+  h1 { font-size: 1.5rem !important; }
+  h2 { font-size: 1.25rem !important; }
+  h3 { font-size: 1.1rem !important; }
+
+  /* Tables scroll horizontally */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Prevent zoom on input focus (iOS) */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+
+  /* Safe area insets for notch phones */
+  .app-container {
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Touch event improvements */
+@media (hover: none) and (pointer: coarse) {
+  /* Larger click targets */
+  button, a, [role="button"] {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  /* Disable hover effects that cause sticky states on mobile */
+  *:hover {
+    transition-delay: 0s !important;
+  }
+
+  /* Smooth scrolling */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Landscape mobile: reduce header height */
+@media (max-height: 500px) and (orientation: landscape) {
+  header, nav {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+  }
+}

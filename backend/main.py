@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 
 from backend.api.routes import health, images, projects, analysis, auth, annotations
+from backend.api.routes.websocket import router as ws_router
 from backend.core.config import settings
 from backend.core.database import init_db, close_db, async_session_maker
 
@@ -410,6 +411,7 @@ app.include_router(projects.router, prefix=settings.API_V1_PREFIX, tags=["Projec
 app.include_router(images.router, prefix=settings.API_V1_PREFIX, tags=["Images"])
 app.include_router(analysis.router, prefix=settings.API_V1_PREFIX, tags=["Analysis"])
 app.include_router(annotations.router, prefix=settings.API_V1_PREFIX, tags=["Annotations"])
+app.include_router(ws_router, tags=["WebSocket"])
 
 
 @app.get("/")

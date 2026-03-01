@@ -78,6 +78,7 @@ except ImportError:
     analyze_video = None
 
 from backend.utils.files import is_image_file, is_video_file
+from backend.api.routes.websocket import progress_manager
 
 router = APIRouter(prefix="/projects")
 
@@ -557,6 +558,16 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
             project = project_result.scalar_one_or_none()
             project_perimeter = project.perimeter_polygon if project else None
 
+            total_items = len(image_ids) + len(video_ids)
+            current_item = 0
+
+            # Notificar início da análise
+            await progress_manager.send_progress(project_id, {
+                "type": "analysis_started",
+                "total": total_items,
+                "status": "processing",
+            })
+
             # Processar imagens
             for image_id in image_ids:
                 result = await db.execute(
@@ -612,6 +623,17 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 db.add(analysis)
                 await db.commit()
                 await db.refresh(analysis)
+
+                current_item += 1
+                await progress_manager.send_progress(project_id, {
+                    "type": "analysis_progress",
+                    "image_id": image.id,
+                    "image_name": image.original_filename,
+                    "step": "full_analysis",
+                    "current": current_item,
+                    "total": total_items,
+                    "status": "processing",
+                })
 
                 await run_image_full_analysis(
                     image, analysis, db,
@@ -709,6 +731,17 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                 await db.commit()
                 await db.refresh(analysis)
 
+                current_item += 1
+                await progress_manager.send_progress(project_id, {
+                    "type": "analysis_progress",
+                    "image_id": image.id,
+                    "image_name": image.original_filename,
+                    "step": "video_analysis",
+                    "current": current_item,
+                    "total": total_items,
+                    "status": "processing",
+                })
+
                 await run_video_analysis(
                     image, analysis, db,
                     roi_mask=video_roi_mask,
@@ -739,6 +772,13 @@ async def run_project_analysis(project_id: int, image_ids: list[int], video_ids:
                         project.latitude = avg_lat
                         project.longitude = avg_lon
                         await db.commit()
+
+            # Notificar conclusão da análise
+            await progress_manager.send_progress(project_id, {
+                "type": "analysis_complete",
+                "total": total_items,
+                "status": "completed",
+            })
 
             # Atualizar status do projeto
             project_result = await db.execute(

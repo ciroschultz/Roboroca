@@ -14,7 +14,7 @@ const config: Config.InitialOptions = {
   },
   testMatch: ['**/__tests__/**/*.(ts|tsx)', '**/*.(test|spec).(ts|tsx)'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
-  testPathIgnorePatterns: ['/node_modules/', '/.next/'],
+  testPathIgnorePatterns: ['/node_modules/', '/.next/', '/e2e/'],
   watchPathIgnorePatterns: ['/node_modules/', '/.next/'],
 };
 
