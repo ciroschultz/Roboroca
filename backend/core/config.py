@@ -4,8 +4,14 @@ Carrega variáveis de ambiente e define valores padrão.
 """
 
 import os
+import secrets
 from typing import List
 from pydantic_settings import BaseSettings
+
+
+def _generate_dev_secret() -> str:
+    """Gera uma chave secreta para desenvolvimento (nao usar em producao)."""
+    return secrets.token_urlsafe(48)
 
 
 class Settings(BaseSettings):
@@ -22,7 +28,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # Segurança
-    SECRET_KEY: str = "your-secret-key-change-in-production-abc123xyz"
+    SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 dias
     ALGORITHM: str = "HS256"
 
@@ -81,9 +87,18 @@ class Settings(BaseSettings):
 # Instância global de configurações
 settings = Settings()
 
-# Validar SECRET_KEY em produção
-if settings.ENVIRONMENT != "development" and "change-in-production" in settings.SECRET_KEY:
-    raise RuntimeError("SECRET_KEY must be changed for production!")
+# SECRET_KEY: gerar automaticamente em dev, exigir em producao
+if not settings.SECRET_KEY or settings.SECRET_KEY in (
+    "your-secret-key-change-in-production-abc123xyz",
+    "sua-chave-secreta-aqui-mude-em-producao",
+):
+    if settings.ENVIRONMENT == "development":
+        settings.SECRET_KEY = _generate_dev_secret()
+    else:
+        raise RuntimeError(
+            "SECRET_KEY deve ser definida no .env para producao! "
+            "Gere com: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
 
 # Criar diretório de uploads se não existir
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)

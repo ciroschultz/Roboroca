@@ -164,6 +164,12 @@ class SceneClassifier:
         with Image.open(image_path) as img:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+            # Redimensionar se muito grande
+            max_size = 4000
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
             image_array = np.array(img)
         return self.classify(image_array, **kwargs)
 
@@ -226,6 +232,12 @@ def classify_vegetation_type(image_path: str) -> Dict[str, Any]:
     with Image.open(image_path) as img:
         if img.mode != 'RGB':
             img = img.convert('RGB')
+        # Redimensionar se muito grande
+        max_size = 4000
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
         image = np.array(img)
 
     # Análise de cores para determinar tipo de vegetação

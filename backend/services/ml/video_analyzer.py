@@ -149,9 +149,18 @@ class VideoAnalyzer:
         mosaic_path = None
         if len(frame_paths) > 0:
             try:
-                frames_for_mosaic = [
-                    np.array(Image.open(p)) for p in frame_paths[:16]
-                ]
+                def _load_frame_for_mosaic(p: str) -> np.ndarray:
+                    with Image.open(p) as _img:
+                        if _img.mode != 'RGB':
+                            _img = _img.convert('RGB')
+                        # Redimensionar se muito grande
+                        _max_size = 4000
+                        if max(_img.size) > _max_size:
+                            _ratio = _max_size / max(_img.size)
+                            _new_size = (int(_img.width * _ratio), int(_img.height * _ratio))
+                            _img = _img.resize(_new_size, Image.Resampling.LANCZOS)
+                        return np.array(_img)
+                frames_for_mosaic = [_load_frame_for_mosaic(p) for p in frame_paths[:16]]
                 mosaic = self.create_mosaic(frames_for_mosaic)
                 mosaic_filename = os.path.splitext(os.path.basename(video_path))[0] + '_mosaic.jpg'
                 mosaic_path = os.path.join(output_dir, mosaic_filename)
@@ -172,6 +181,12 @@ class VideoAnalyzer:
         with Image.open(frame_path) as img:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+            # Redimensionar se muito grande
+            max_size = 4000
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
             image_array = np.array(img)
 
         # Análise de vegetação (sempre disponível)

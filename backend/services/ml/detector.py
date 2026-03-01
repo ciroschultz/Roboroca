@@ -146,6 +146,12 @@ class ObjectDetector:
         with Image.open(image_path) as img:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+            # Redimensionar se muito grande
+            max_size = 4000
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
             image_array = np.array(img)
         return self.detect(image_array, **kwargs)
 

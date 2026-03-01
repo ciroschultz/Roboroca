@@ -1155,11 +1155,13 @@ async def detect_pests(
 
     try:
         # Executar deteccao em thread separada
+        img_type = getattr(image, 'image_type', 'drone') or 'drone'
         pest_results = await asyncio.to_thread(
             detect_pest_disease,
             image.file_path,
             anomaly_threshold,
             min_region_area,
+            image_type=img_type,
         )
 
         processing_time = time.time() - start_time
@@ -1230,10 +1232,12 @@ async def estimate_biomass_endpoint(
 
     try:
         # Executar estimativa em thread separada
+        img_type = getattr(image, 'image_type', 'drone') or 'drone'
         biomass_results = await asyncio.to_thread(
             estimate_biomass,
             image.file_path,
             min_canopy_area,
+            image_type=img_type,
         )
 
         processing_time = time.time() - start_time
@@ -1859,8 +1863,9 @@ async def analyze_roi(
 
         if "pest_disease" in body.analyses and detect_pest_disease is not None:
             try:
+                img_type = getattr(image, 'image_type', 'drone') or 'drone'
                 pest = await asyncio.to_thread(
-                    detect_pest_disease, image.file_path, roi_mask=roi_mask
+                    detect_pest_disease, image.file_path, roi_mask=roi_mask, image_type=img_type
                 )
                 results["pest_disease"] = pest
             except Exception as e:
@@ -1868,8 +1873,9 @@ async def analyze_roi(
 
         if "biomass" in body.analyses and estimate_biomass is not None:
             try:
+                img_type = getattr(image, 'image_type', 'drone') or 'drone'
                 bio = await asyncio.to_thread(
-                    estimate_biomass, image.file_path, roi_mask=roi_mask
+                    estimate_biomass, image.file_path, roi_mask=roi_mask, image_type=img_type
                 )
                 results["biomass"] = bio
             except Exception as e:

@@ -184,6 +184,7 @@ def detect_pest_disease(
     anomaly_threshold: float = 2.0,
     min_region_area: int = 100,
     roi_mask: np.ndarray = None,
+    image_type: str = "drone",
 ) -> Dict[str, Any]:
     """
     Detectar pragas e doencas em vegetacao via analise de cor e textura.
@@ -192,10 +193,16 @@ def detect_pest_disease(
         image_path: Caminho para a imagem
         anomaly_threshold: Limiar de z-score para anomalias de textura
         min_region_area: Area minima em pixels para considerar uma regiao
+        roi_mask: Mascara binaria para restringir analise a uma regiao
+        image_type: "drone" ou "satellite" para thresholds adaptativos
 
     Returns:
         Dicionario com resultados da deteccao
     """
+    # Thresholds adaptativos para satelite (evitar falsos positivos de compressao de cores)
+    if image_type == "satellite":
+        min_region_area = max(min_region_area, 200)
+        anomaly_threshold = max(anomaly_threshold, 2.5)
     # Carregar e preparar imagem
     with PILImage.open(image_path) as img:
         if img.mode != 'RGB':

@@ -322,7 +322,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
         if detect_pest_disease is not None:
             try:
                 pest_results = await asyncio.to_thread(
-                    detect_pest_disease, img_source, roi_mask=roi_mask
+                    detect_pest_disease, img_source, roi_mask=roi_mask, image_type=image_type
                 )
                 analysis_results["pest_disease"] = pest_results
             except Exception as e:
@@ -334,7 +334,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
         if estimate_biomass is not None:
             try:
                 biomass = await asyncio.to_thread(
-                    estimate_biomass, img_source, roi_mask=roi_mask
+                    estimate_biomass, img_source, roi_mask=roi_mask, image_type=image_type
                 )
                 analysis_results["biomass"] = biomass
             except Exception as e:

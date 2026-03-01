@@ -7,7 +7,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +15,7 @@ from sqlalchemy import select
 from backend.core.database import get_db
 from backend.core.config import settings
 from backend.core.security import verify_password, get_password_hash, create_access_token
+from backend.core.rate_limit import auth_rate_limiter, login_rate_limiter
 from backend.models.user import User
 from backend.api.schemas.user import (
     UserCreate,
@@ -35,10 +36,12 @@ router = APIRouter(prefix="/auth")
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
+    request: Request,
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
 ):
     """Registrar novo usuário."""
+    auth_rate_limiter.check(request)
     # Verificar se email já existe
     result = await db.execute(select(User).where(User.email == user_data.email))
     if result.scalar_one_or_none():
@@ -72,6 +75,7 @@ async def register(
 
 @router.post("/login", response_model=Token)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
@@ -80,6 +84,7 @@ async def login(
 
     Use o email como username no formulário.
     """
+    login_rate_limiter.check(request)
     # Buscar usuário por email
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
@@ -167,10 +172,12 @@ async def change_password(
 
 @router.post("/password/reset-request")
 async def request_password_reset(
+    request: Request,
     data: PasswordResetRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """Solicitar reset de senha. Gera token e loga URL no console."""
+    login_rate_limiter.check(request)
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 

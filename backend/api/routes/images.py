@@ -67,6 +67,60 @@ def validate_file_extension(filename: str) -> bool:
     return ext in ALLOWED_EXTENSIONS
 
 
+def _validate_file_magic(content: bytes, filename: str) -> bool:
+    """
+    Validar assinatura de bytes (magic bytes) do arquivo.
+
+    Verifica os primeiros bytes do conteúdo contra assinaturas conhecidas
+    para o tipo de arquivo indicado pela extensão. Impede uploads de arquivos
+    disfarçados com extensão falsa.
+
+    Retorna True se os magic bytes correspondem ao tipo esperado,
+    False caso contrário.
+    """
+    if len(content) < 12:
+        return False
+
+    ext = os.path.splitext(filename)[1].lower()
+
+    # Assinaturas conhecidas por extensão
+    MAGIC_SIGNATURES: dict[str, list[tuple]] = {
+        # JPEG: primeiros 3 bytes
+        ".jpg":  [("prefix", b"\xff\xd8\xff")],
+        ".jpeg": [("prefix", b"\xff\xd8\xff")],
+        # PNG: 8 bytes exactos
+        ".png":  [("prefix", b"\x89PNG\r\n\x1a\n")],
+        # TIFF little-endian ou big-endian
+        ".tif":  [("prefix", b"II\x2a\x00"), ("prefix", b"MM\x00\x2a")],
+        ".tiff": [("prefix", b"II\x2a\x00"), ("prefix", b"MM\x00\x2a")],
+        # GeoTIFF usa os mesmos magic bytes de TIFF
+        ".geotiff": [("prefix", b"II\x2a\x00"), ("prefix", b"MM\x00\x2a")],
+        # MP4 / MOV: 'ftyp' nos bytes 4-7
+        ".mp4": [("offset4", b"ftyp")],
+        ".mov": [("offset4", b"ftyp")],
+        # AVI: 'RIFF' no offset 0 e 'AVI ' no offset 8
+        ".avi": [("avi", None)],
+    }
+
+    rules = MAGIC_SIGNATURES.get(ext)
+    if rules is None:
+        # Extensão não mapeada — deixar passar (content-type e extensão já validados)
+        return True
+
+    for rule_type, signature in rules:
+        if rule_type == "prefix":
+            if content[: len(signature)] == signature:
+                return True
+        elif rule_type == "offset4":
+            if content[4:8] == signature:
+                return True
+        elif rule_type == "avi":
+            if content[0:4] == b"RIFF" and content[8:12] == b"AVI ":
+                return True
+
+    return False
+
+
 @router.get("/", response_model=ImageListResponse)
 async def list_images(
     project_id: Optional[int] = None,
@@ -179,6 +233,13 @@ async def upload_image(
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"Arquivo muito grande ({file_size / 1024 / 1024:.1f}MB). Máximo para {'vídeos' if is_video else 'imagens'}: {max_mb:.0f}MB"
+            )
+
+        # Validar magic bytes (assinatura do arquivo) para prevenir uploads disfarçados
+        if not _validate_file_magic(content, file.filename):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Tipo de arquivo invalido ou corrompido"
             )
 
         with open(file_path, "wb") as f:
@@ -341,6 +402,14 @@ async def upload_multiple_images(
                 errors.append({
                     "filename": file.filename,
                     "error": f"Arquivo muito grande ({file_size / 1024 / 1024:.1f}MB). Máximo: {max_mb:.0f}MB"
+                })
+                continue
+
+            # Validar magic bytes (assinatura do arquivo) para prevenir uploads disfarçados
+            if not _validate_file_magic(content, file.filename):
+                errors.append({
+                    "filename": file.filename,
+                    "error": "Tipo de arquivo invalido ou corrompido"
                 })
                 continue
 

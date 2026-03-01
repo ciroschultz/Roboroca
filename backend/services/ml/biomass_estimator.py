@@ -231,6 +231,7 @@ def estimate_biomass(
     image_path: str,
     min_canopy_area: int = 50,
     roi_mask: np.ndarray = None,
+    image_type: str = "drone",
 ) -> Dict[str, Any]:
     """
     Estimar biomassa vegetal em uma imagem aerea.
@@ -238,10 +239,15 @@ def estimate_biomass(
     Args:
         image_path: Caminho para a imagem
         min_canopy_area: Area minima em pixels para considerar uma copa
+        roi_mask: Mascara binaria para restringir analise a uma regiao
+        image_type: "drone" ou "satellite" para thresholds adaptativos
 
     Returns:
         Dicionario com resultados da estimativa de biomassa
     """
+    # Thresholds adaptativos para satelite
+    if image_type == "satellite":
+        min_canopy_area = max(min_canopy_area, 30)
     # Carregar e preparar imagem
     with PILImage.open(image_path) as img:
         if img.mode != "RGB":
