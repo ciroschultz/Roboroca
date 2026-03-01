@@ -2,17 +2,28 @@
 Database configuration and session management.
 """
 
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
 from backend.core.config import settings
 
+is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+
 # Criar engine assíncrono
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,  # Log SQL queries in debug mode
-    future=True,
-)
+engine_kwargs = {
+    "echo": settings.DEBUG,  # Log SQL queries in debug mode
+    "future": True,
+}
+if not is_sqlite:
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_pre_ping": True,
+    })
+
+engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 
 # Session factory
 async_session_maker = async_sessionmaker(
@@ -56,16 +67,26 @@ async def init_db():
         import sqlalchemy as sa
 
         async def column_exists(conn, table: str, column: str) -> bool:
-            result = await conn.execute(sa.text(f"PRAGMA table_info({table})"))
-            columns = [row[1] for row in result.fetchall()]
-            return column in columns
+            if is_sqlite:
+                result = await conn.execute(sa.text(f"PRAGMA table_info({table})"))
+                columns = [row[1] for row in result.fetchall()]
+                return column in columns
+            else:
+                result = await conn.execute(
+                    sa.text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_name = :table AND column_name = :column"
+                    ),
+                    {"table": table, "column": column},
+                )
+                return result.fetchone() is not None
 
         if not await column_exists(conn, "images", "source_video_id"):
             await conn.execute(
                 sa.text("ALTER TABLE images ADD COLUMN source_video_id INTEGER")
             )
 
-    print("Database tables created successfully")
+    logging.getLogger(__name__).info("Database tables created successfully")
 
 
 async def close_db():
