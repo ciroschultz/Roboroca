@@ -3,10 +3,12 @@ Configurações da aplicação.
 Carrega variáveis de ambiente e define valores padrão.
 """
 
+import json
 import os
 import secrets
 from typing import List
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _generate_dev_secret() -> str:
@@ -79,9 +81,19 @@ class Settings(BaseSettings):
     ML_MODELS_DIR: str = "./ml_models"
     DEFAULT_SEGMENTATION_MODEL: str = "unet_landuse"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("["):
+                return json.loads(v)
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 
 # Instância global de configurações

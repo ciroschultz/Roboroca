@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from backend.core.database import get_db
 from backend.core.config import settings
-from backend.core.security import verify_password, get_password_hash, create_access_token
+from backend.core.security import verify_password, get_password_hash, create_access_token, decode_access_token, blacklist_token
 from backend.core.rate_limit import auth_rate_limiter, login_rate_limiter
 from backend.models.user import User
 from backend.api.schemas.user import (
@@ -27,7 +27,7 @@ from backend.api.schemas.user import (
     PasswordResetRequest,
     PasswordResetConfirm,
 )
-from backend.api.dependencies.auth import get_current_user
+from backend.api.dependencies.auth import get_current_user, oauth2_scheme
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,16 @@ async def login(
     )
 
     return Token(access_token=access_token)
+
+
+@router.post("/logout")
+async def logout(token: str = Depends(oauth2_scheme)):
+    """Invalidar o token JWT atual (logout)."""
+    payload = decode_access_token(token)
+    if payload and payload.get("jti"):
+        exp = payload.get("exp", 0)
+        blacklist_token(payload["jti"], exp)
+    return {"message": "Logout realizado com sucesso"}
 
 
 @router.get("/me", response_model=UserResponse)

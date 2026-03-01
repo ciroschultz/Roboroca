@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Sidebar from '@/components/Sidebar'
 import Header from '@/components/Header'
 import AuthScreen from '@/components/AuthScreen'
+import LandingPage from '@/components/LandingPage'
 import {
   getProjects,
   getImages,
@@ -97,8 +98,16 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>(initialProjects)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(() => {
+    // Só mostrar loading se existe token salvo (pode estar logado)
+    if (typeof window !== 'undefined') {
+      return !!localStorage.getItem('roboroca_token')
+    }
+    return false
+  })
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [showLanding, setShowLanding] = useState(true)
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const toast = useToast()
@@ -165,6 +174,7 @@ export default function Home() {
     apiLogout()
     setCurrentUser(null)
     setIsAuthenticated(false)
+    setShowLanding(true)
     setProjects(initialProjects)
   }
 
@@ -1216,7 +1226,7 @@ export default function Home() {
     }
   }
 
-  // Mostrar loading enquanto verifica autenticação
+  // Loading: só quando tem token e está verificando autenticação
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#0f0f1a] via-[#1a1a2e] to-[#0f2027] flex items-center justify-center">
@@ -1232,15 +1242,23 @@ export default function Home() {
     )
   }
 
+  // Não autenticado: Landing Page ou tela de login/cadastro
+  if (!isAuthenticated) {
+    if (showLanding) {
+      return (
+        <LandingPage
+          onGetStarted={() => { setAuthMode('register'); setShowLanding(false); }}
+          onLogin={() => { setAuthMode('login'); setShowLanding(false); }}
+        />
+      );
+    }
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />
+  }
+
   // Fechar menu mobile ao mudar de página
   const handleMenuClickWithMobile = (id: string) => {
     handleMenuClick(id)
     setMobileMenuOpen(false)
-  }
-
-  // Mostrar tela de autenticação se não estiver autenticado
-  if (!isAuthenticated) {
-    return <AuthScreen onAuthSuccess={handleAuthSuccess} />
   }
 
   return (

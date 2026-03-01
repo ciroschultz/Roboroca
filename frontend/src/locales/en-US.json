@@ -85,6 +85,65 @@
     "zoomOut": "Zoom Out",
     "screenshot": "Screenshot"
   },
+  "landing": {
+    "hero": {
+      "subtitle": "Intelligent aerial image analysis for agriculture",
+      "description": "Identify vegetation, count trees, detect pests, and monitor crop health using artificial intelligence.",
+      "cta": "Get Started"
+    },
+    "whatIs": {
+      "title": "What is Roboroça?",
+      "p1": "Roboroça is a full-featured platform for agricultural aerial image analysis. Using state-of-the-art machine learning models, it processes drone and satellite images to generate actionable insights about your property.",
+      "p2": "From pest detection to tree counting, from biomass estimation to vegetation health monitoring — everything in a single platform, accessible from any device."
+    },
+    "stats": {
+      "endpoints": "API Endpoints",
+      "models": "ML Models",
+      "languages": "Languages",
+      "tests": "Automated Tests"
+    },
+    "features": {
+      "title": "Features",
+      "aerial": "Aerial Images",
+      "aerialDesc": "Upload drone, satellite, and video files. Automatic GPS extraction and keyframe detection.",
+      "ai": "Advanced AI",
+      "aiDesc": "8 ML models: vegetation, trees, pests, biomass, NDVI, and land classification.",
+      "gis": "GIS Tools",
+      "gisDesc": "Cultivation zones, ROI perimeter, annotations, and GeoJSON export.",
+      "video": "Video Analysis",
+      "videoDesc": "Upload drone videos with automatic keyframe extraction.",
+      "dashboard": "Full Dashboard",
+      "dashboardDesc": "Cross-project comparison, evolution timeline, and detailed metrics.",
+      "geojson": "GeoJSON Export",
+      "geojsonDesc": "Export annotations and zones to QGIS, Google Earth, and other GIS tools.",
+      "i18n": "Multilingual",
+      "i18nDesc": "Available in Portuguese, English, and Spanish.",
+      "darkMode": "Dark Mode",
+      "darkModeDesc": "Adaptive interface with light and dark themes."
+    },
+    "steps": {
+      "title": "How It Works",
+      "upload": "Upload",
+      "uploadDesc": "Upload drone, satellite, or video images.",
+      "perimeter": "Perimeter",
+      "perimeterDesc": "Define the area of interest on the map.",
+      "analyze": "Analysis",
+      "analyzeDesc": "AI processes the images and generates reports automatically.",
+      "report": "Report",
+      "reportDesc": "View results and export your data."
+    },
+    "tech": {
+      "title": "Technologies"
+    },
+    "cta": {
+      "title": "Ready to get started?",
+      "description": "Create your free account and start analyzing your aerial images today.",
+      "button": "Create Free Account"
+    },
+    "footer": {
+      "text": "Intelligent analysis for sustainable agriculture"
+    }
+  },
   "settings": {
     "title": "Settings",
     "profile": "Profile",

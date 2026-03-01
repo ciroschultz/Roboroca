@@ -4,7 +4,7 @@ Analysis schemas - Validação de dados de análise.
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- Request Schemas ---
@@ -95,8 +95,7 @@ class AnalysisResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AnalysisListResponse(BaseModel):

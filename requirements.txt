@@ -29,10 +29,9 @@ passlib[argon2]>=1.7.4
 argon2-cffi>=23.1.0
 
 # -----------------
-# Task Queue
+# Production Server
 # -----------------
-celery[redis]>=5.3.6
-redis>=5.0.1
+gunicorn>=21.2.0
 
 # -----------------
 # Geospatial Processing

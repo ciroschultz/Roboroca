@@ -85,6 +85,65 @@
     "zoomOut": "Alejar",
     "screenshot": "Captura de pantalla"
   },
+  "landing": {
+    "hero": {
+      "subtitle": "Análisis inteligente de imágenes aéreas para agricultura",
+      "description": "Identifique vegetación, cuente árboles, detecte plagas y monitoree la salud de sus cultivos con inteligencia artificial.",
+      "cta": "Comenzar Ahora"
+    },
+    "whatIs": {
+      "title": "¿Qué es Roboroça?",
+      "p1": "Roboroça es una plataforma completa para el análisis de imágenes aéreas agrícolas. Usando modelos de machine learning de última generación, procesamos imágenes de drones y satélites para generar información accionable sobre su propiedad.",
+      "p2": "Desde la detección de plagas hasta el conteo de árboles, desde el cálculo de biomasa hasta el monitoreo de salud vegetal — todo en una única plataforma, accesible desde cualquier dispositivo."
+    },
+    "stats": {
+      "endpoints": "Endpoints API",
+      "models": "Modelos ML",
+      "languages": "Idiomas",
+      "tests": "Pruebas Automatizadas"
+    },
+    "features": {
+      "title": "Funcionalidades",
+      "aerial": "Imágenes Aéreas",
+      "aerialDesc": "Carga desde drone, satélite y video. GPS automático y extracción de keyframes.",
+      "ai": "IA Avanzada",
+      "aiDesc": "8 modelos ML: vegetación, árboles, plagas, biomasa, NDVI y clasificación.",
+      "gis": "Herramientas GIS",
+      "gisDesc": "Zonas de cultivo, perímetro ROI, anotaciones y exportación GeoJSON.",
+      "video": "Análisis de Video",
+      "videoDesc": "Carga de videos de drone con extracción automática de keyframes.",
+      "dashboard": "Panel Completo",
+      "dashboardDesc": "Comparación entre proyectos, línea temporal evolutiva y métricas detalladas.",
+      "geojson": "Exportación GeoJSON",
+      "geojsonDesc": "Exporte anotaciones y zonas a QGIS, Google Earth y otros SIG.",
+      "i18n": "Multilingüe",
+      "i18nDesc": "Disponible en Portugués, English y Español.",
+      "darkMode": "Modo Oscuro",
+      "darkModeDesc": "Interfaz adaptable con tema claro y oscuro."
+    },
+    "steps": {
+      "title": "Cómo Funciona",
+      "upload": "Carga",
+      "uploadDesc": "Envíe imágenes de drone, satélite o video.",
+      "perimeter": "Perímetro",
+      "perimeterDesc": "Defina el área de interés en el mapa.",
+      "analyze": "Análisis",
+      "analyzeDesc": "La IA procesa y genera informes automáticos.",
+      "report": "Informe",
+      "reportDesc": "Visualice resultados y exporte datos."
+    },
+    "tech": {
+      "title": "Tecnologías"
+    },
+    "cta": {
+      "title": "¿Listo para comenzar?",
+      "description": "Cree su cuenta gratuitamente y comience a analizar sus imágenes aéreas.",
+      "button": "Crear Cuenta Gratuita"
+    },
+    "footer": {
+      "text": "Análisis inteligente para agricultura sustentable"
+    }
+  },
   "settings": {
     "title": "Configuración",
     "profile": "Perfil",

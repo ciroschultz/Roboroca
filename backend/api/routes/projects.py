@@ -83,6 +83,17 @@ from backend.api.routes.websocket import progress_manager
 router = APIRouter(prefix="/projects")
 
 
+def count_real_images(images) -> int:
+    """Count only real images, excluding video keyframes and video files."""
+    if not images:
+        return 0
+    return len([
+        img for img in images
+        if getattr(img, 'image_type', None) != 'keyframe'
+        and not (img.mime_type or '').startswith('video/')
+    ])
+
+
 def _build_roi_mask_from_polygon(image_path: str, polygon_points: list) -> np.ndarray:
     """
     Cria máscara binária (0/1) a partir de polígono normalizado (0-1).
@@ -845,7 +856,7 @@ async def list_projects(
             "longitude": project.longitude,
             "total_area_ha": project.total_area_ha,
             "area_hectares": project.total_area_ha,
-            "image_count": len(project.images) if project.images else 0,
+            "image_count": count_real_images(project.images),
             "owner_id": project.owner_id,
             "created_at": project.created_at,
             "updated_at": project.updated_at,
@@ -960,8 +971,8 @@ async def get_projects_comparison(
     projects_data = []
 
     for project in projects:
-        # Contar imagens do projeto
-        image_count = len(project.images) if project.images else 0
+        # Contar imagens do projeto (excluindo keyframes e videos)
+        image_count = count_real_images(project.images)
 
         # Buscar análises completas para este projeto
         analyses_result = await db.execute(
@@ -1065,11 +1076,7 @@ async def get_projects_comparison_detailed(
 
     for project in projects:
         # Count only spatial images (exclude videos and keyframes)
-        image_count = len([
-            img for img in (project.images or [])
-            if getattr(img, 'image_type', None) != 'keyframe'
-            and not (img.mime_type or '').startswith('video/')
-        ])
+        image_count = count_real_images(project.images)
 
         # Buscar todas as análises completas (full_report + roi_analysis)
         analyses_result = await db.execute(
@@ -1349,7 +1356,7 @@ async def get_project(
         "total_area_ha": project.total_area_ha,
         "perimeter_polygon": project.perimeter_polygon,
         "area_hectares": project.total_area_ha,
-        "image_count": len(project.images) if project.images else 0,
+        "image_count": count_real_images(project.images),
         "owner_id": project.owner_id,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
@@ -1413,7 +1420,7 @@ async def update_project(
         "total_area_ha": project.total_area_ha,
         "perimeter_polygon": project.perimeter_polygon,
         "area_hectares": project.total_area_ha,
-        "image_count": len(project.images) if project.images else 0,
+        "image_count": count_real_images(project.images),
         "owner_id": project.owner_id,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
