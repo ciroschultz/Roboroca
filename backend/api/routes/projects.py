@@ -248,7 +248,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
             # 2a. Segmentação DeepLabV3
             if segment_image is not None:
                 try:
-                    segmentation = await asyncio.to_thread(segment_image, img_source)
+                    segmentation = await asyncio.to_thread(segment_image, img_source, roi_mask=roi_mask)
                     analysis_results["segmentation"] = segmentation
                 except Exception as e:
                     ml_errors.append(f"segmentation: {e}")
@@ -256,7 +256,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
             # 2b. Classificação de cena ResNet18
             if classify_scene is not None:
                 try:
-                    scene = await asyncio.to_thread(classify_scene, img_source)
+                    scene = await asyncio.to_thread(classify_scene, img_source, roi_mask=roi_mask)
                     analysis_results["scene_classification"] = scene
                 except Exception as e:
                     ml_errors.append(f"scene_classification: {e}")
@@ -272,7 +272,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
             # 2d. Extração de features (textura, cor, padrões, anomalias)
             if extract_all_features is not None:
                 try:
-                    features = await asyncio.to_thread(extract_all_features, img_source)
+                    features = await asyncio.to_thread(extract_all_features, img_source, roi_mask=roi_mask)
                     analysis_results["visual_features"] = features
                 except Exception as e:
                     ml_errors.append(f"features: {e}")
@@ -280,7 +280,7 @@ async def run_image_full_analysis(image, analysis, db, roi_mask=None, source_pat
             # 2e. Detecção YOLO (mais lenta, por último)
             if get_detection_summary is not None:
                 try:
-                    detections = await asyncio.to_thread(get_detection_summary, img_source)
+                    detections = await asyncio.to_thread(get_detection_summary, img_source, roi_mask=roi_mask)
                     analysis_results["object_detection"] = detections
                 except Exception as e:
                     ml_errors.append(f"object_detection: {e}")
@@ -1708,7 +1708,8 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
     if not images_with_gps and not all_images:
         return 0.0
 
-    # Se temos imagens mas sem GPS, tentar estimar pela dimensão
+    # Se temos imagens mas sem GPS, estimar pela dimensão da MAIOR imagem
+    # (não somar, pois múltiplas imagens podem cobrir a mesma área)
     if not images_with_gps and all_images:
         # Filter out videos and keyframes — they don't have real spatial data
         spatial_images = [
@@ -1718,7 +1719,7 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
         ]
         if not spatial_images:
             return 0.0
-        total_area_ha = 0.0
+        max_area_ha = 0.0
         for img in spatial_images:
             if img.width and img.height:
                 gsd_m = _get_best_gsd(img)
@@ -1727,8 +1728,8 @@ def calculate_bounding_box_area_ha(images_with_gps: list, all_images: list = Non
                 height_m = img.height * gsd_m
                 area_m2 = width_m * height_m
                 area_ha = area_m2 / 10000
-                total_area_ha += area_ha
-        return max(round(total_area_ha, 2), 0.01)
+                max_area_ha = max(max_area_ha, area_ha)
+        return max(round(max_area_ha, 2), 0.01)
 
     lats = [img.center_lat for img in images_with_gps]
     lons = [img.center_lon for img in images_with_gps]
@@ -1916,20 +1917,20 @@ async def get_project_analysis_summary(
                 vtype = veg_type['vegetation_type']
                 vegetation_types[vtype] = vegetation_types.get(vtype, 0) + 1
 
-        # Detecção de objetos (YOLO)
+        # Detecção de objetos (YOLO) — usar MAX por classe (imagens podem cobrir mesma área)
         if 'object_detection' in results:
             det = results['object_detection']
             if det.get('total_detections'):
-                total_yolo_detections += det['total_detections']
+                total_yolo_detections = max(total_yolo_detections, det['total_detections'])
             if det.get('by_class'):
                 for cls, count in det['by_class'].items():
-                    objects_by_class[cls] = objects_by_class.get(cls, 0) + count
+                    objects_by_class[cls] = max(objects_by_class.get(cls, 0), count)
 
-        # Contagem de árvores por segmentação (acumula separadamente)
+        # Contagem de árvores por segmentação — usar MAX (imagens podem cobrir mesma área)
         if 'tree_count' in results:
             tree_data = results['tree_count']
             if tree_data.get('total_trees'):
-                total_tree_count += tree_data['total_trees']
+                total_tree_count = max(total_tree_count, tree_data['total_trees'])
 
         # Biomassa
         if 'biomass' in results:

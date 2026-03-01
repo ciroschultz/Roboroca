@@ -120,6 +120,39 @@ def is_image_file(filename: str) -> bool:
     return ext in {'.tif', '.tiff', '.jpg', '.jpeg', '.png', '.geotiff'}
 
 
+async def _get_roi_mask_for_image(image: Image, db: AsyncSession) -> Optional[np.ndarray]:
+    """
+    Construir roi_mask a partir do perimeter_polygon da imagem ou do projeto.
+    Retorna None se não houver perímetro definido.
+    """
+    perimeter = image.perimeter_polygon
+    if not perimeter:
+        # Fallback: buscar perímetro do projeto
+        result = await db.execute(
+            select(Project).where(Project.id == image.project_id)
+        )
+        project = result.scalar_one_or_none()
+        if project:
+            perimeter = project.perimeter_polygon
+
+    if not perimeter or len(perimeter) < 3:
+        return None
+
+    try:
+        import cv2
+        with PILImage.open(image.file_path) as img:
+            w, h = img.size
+        mask = np.zeros((h, w), dtype=np.uint8)
+        pts = np.array(
+            [[int(p[0] * w), int(p[1] * h)] for p in perimeter],
+            dtype=np.int32,
+        )
+        cv2.fillPoly(mask, [pts], 1)
+        return mask
+    except Exception:
+        return None
+
+
 @router.get("/", response_model=AnalysisListResponse)
 async def list_analyses(
     image_id: Optional[int] = None,
@@ -202,8 +235,11 @@ async def analyze_vegetation(
     start_time = time.time()
 
     try:
-        # Executar análise completa
-        results = run_basic_analysis(image.file_path)
+        # Construir ROI mask a partir do perímetro (se houver)
+        roi_mask = await _get_roi_mask_for_image(image, db)
+
+        # Executar análise completa (restrita ao ROI se houver perímetro)
+        results = run_basic_analysis(image.file_path, roi_mask=roi_mask)
 
         # Atualizar com threshold customizado se diferente do padrão
         if threshold != 0.3:
@@ -211,7 +247,7 @@ async def analyze_vegetation(
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
                 image_array = np.array(img)
-            results['coverage'] = calculate_vegetation_coverage(image_array, threshold)
+            results['coverage'] = calculate_vegetation_coverage(image_array, threshold, roi_mask=roi_mask)
 
         processing_time = time.time() - start_time
 
@@ -275,14 +311,17 @@ async def analyze_plant_health(
     start_time = time.time()
 
     try:
+        # Construir ROI mask a partir do perímetro (se houver)
+        roi_mask = await _get_roi_mask_for_image(image, db)
+
         # Carregar imagem
         with PILImage.open(image.file_path) as img:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             image_array = np.array(img)
 
-        # Executar análise de saúde
-        health_results = estimate_vegetation_health(image_array)
+        # Executar análise de saúde (restrita ao ROI se houver perímetro)
+        health_results = estimate_vegetation_health(image_array, roi_mask=roi_mask)
 
         processing_time = time.time() - start_time
 
@@ -363,15 +402,18 @@ async def analyze_colors(
     start_time = time.time()
 
     try:
+        # Construir ROI mask a partir do perímetro (se houver)
+        roi_mask = await _get_roi_mask_for_image(image, db)
+
         # Carregar imagem
         with PILImage.open(image.file_path) as img:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             image_array = np.array(img)
 
-        # Executar análises
-        color_stats = analyze_image_colors(image_array)
-        histogram = calculate_color_histogram(image_array, bins)
+        # Executar análises (restritas ao ROI se houver perímetro)
+        color_stats = analyze_image_colors(image_array, roi_mask=roi_mask)
+        histogram = calculate_color_histogram(image_array, bins, roi_mask=roi_mask)
 
         processing_time = time.time() - start_time
 

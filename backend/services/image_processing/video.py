@@ -110,19 +110,25 @@ def extract_frames(
         if fps <= 0:
             fps = 30  # Assumir 30fps se não conseguir detectar
 
-        # Calcular intervalo em frames
-        frame_interval = int(fps * interval_seconds)
-        if frame_interval < 1:
-            frame_interval = 1
+        # Distribuir frames uniformemente ao longo do vídeo inteiro
+        # Em vez de avançar por intervalo fixo (que só cobre o início),
+        # calculamos step = total_frames / max_frames
+        if total_frames <= max_frames:
+            # Vídeo curto: pegar todos os frames possíveis com o intervalo
+            frame_interval = int(fps * interval_seconds)
+            if frame_interval < 1:
+                frame_interval = 1
+            positions = list(range(0, total_frames, frame_interval))
+        else:
+            step = total_frames / max_frames
+            positions = [int(i * step) for i in range(max_frames)]
 
         saved_frames = []
-        frame_number = 0
-        frames_extracted = 0
 
         # Nome base do vídeo (sem extensão)
         video_name = os.path.splitext(os.path.basename(video_path))[0]
 
-        while frames_extracted < max_frames:
+        for idx, frame_number in enumerate(positions):
             # Posicionar no frame desejado
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
 
@@ -135,7 +141,7 @@ def extract_frames(
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             # Salvar frame
-            frame_filename = f"{video_name}_frame_{frames_extracted:04d}.{format}"
+            frame_filename = f"{video_name}_frame_{idx:04d}.{format}"
             frame_path = os.path.join(output_dir, frame_filename)
 
             # Converter para PIL e salvar
@@ -143,11 +149,6 @@ def extract_frames(
             img.save(frame_path, quality=90 if format == 'jpg' else None)
 
             saved_frames.append(frame_path)
-            frames_extracted += 1
-            frame_number += frame_interval
-
-            if frame_number >= total_frames:
-                break
 
         return saved_frames
 

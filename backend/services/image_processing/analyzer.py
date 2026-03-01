@@ -142,39 +142,71 @@ def detect_vegetation_mask(
     return mask
 
 
-def calculate_color_histogram(image: np.ndarray, bins: int = 32) -> Dict[str, list]:
+def calculate_color_histogram(
+    image: np.ndarray,
+    bins: int = 32,
+    roi_mask: Optional[np.ndarray] = None,
+) -> Dict[str, list]:
     """
     Calcular histograma de cores da imagem.
 
     Args:
         image: Array NumPy RGB (H, W, 3)
         bins: Número de bins do histograma
+        roi_mask: Máscara binária opcional (0/1) delimitando a região de interesse
 
     Returns:
         Dicionário com histogramas R, G, B
     """
     histograms = {}
 
-    for i, channel in enumerate(['red', 'green', 'blue']):
-        hist, _ = np.histogram(image[:, :, i], bins=bins, range=(0, 256))
-        histograms[channel] = hist.tolist()
+    if roi_mask is not None:
+        mask_bool = roi_mask > 0
+        for i, channel in enumerate(['red', 'green', 'blue']):
+            pixels = image[:, :, i][mask_bool]
+            hist, _ = np.histogram(pixels, bins=bins, range=(0, 256))
+            histograms[channel] = hist.tolist()
+    else:
+        for i, channel in enumerate(['red', 'green', 'blue']):
+            hist, _ = np.histogram(image[:, :, i], bins=bins, range=(0, 256))
+            histograms[channel] = hist.tolist()
 
     return histograms
 
 
-def analyze_image_colors(image: np.ndarray) -> Dict[str, Any]:
+def analyze_image_colors(
+    image: np.ndarray,
+    roi_mask: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
     """
     Analisar distribuição de cores da imagem.
 
     Args:
         image: Array NumPy RGB (H, W, 3)
+        roi_mask: Máscara binária opcional (0/1) delimitando a região de interesse
 
     Returns:
         Estatísticas de cor
     """
-    r = image[:, :, 0]
-    g = image[:, :, 1]
-    b = image[:, :, 2]
+    if roi_mask is not None:
+        mask_bool = roi_mask > 0
+        r = image[:, :, 0][mask_bool]
+        g = image[:, :, 1][mask_bool]
+        b = image[:, :, 2][mask_bool]
+        # Brightness only within ROI
+        brightness = float(np.mean([r.mean(), g.mean(), b.mean()])) if r.size > 0 else 0.0
+    else:
+        r = image[:, :, 0]
+        g = image[:, :, 1]
+        b = image[:, :, 2]
+        brightness = float(image.mean())
+
+    if r.size == 0:
+        empty = {'mean': 0.0, 'std': 0.0, 'min': 0, 'max': 0}
+        return {
+            'red': empty, 'green': empty, 'blue': empty,
+            'brightness': 0.0, 'is_predominantly_green': False,
+        }
 
     return {
         'red': {
@@ -195,7 +227,7 @@ def analyze_image_colors(image: np.ndarray) -> Dict[str, Any]:
             'min': int(b.min()),
             'max': int(b.max()),
         },
-        'brightness': float(image.mean()),
+        'brightness': brightness,
         'is_predominantly_green': bool(g.mean() > r.mean() and g.mean() > b.mean()),
     }
 
@@ -344,8 +376,8 @@ def run_basic_analysis(
     # Executar análises (restrita ao ROI se fornecido)
     coverage = calculate_vegetation_coverage(image_array, threshold=threshold, roi_mask=roi_mask)
     health = estimate_vegetation_health(image_array, roi_mask=roi_mask)
-    colors = analyze_image_colors(image_array)
-    histogram = calculate_color_histogram(image_array)
+    colors = analyze_image_colors(image_array, roi_mask=roi_mask)
+    histogram = calculate_color_histogram(image_array, roi_mask=roi_mask)
 
     return {
         'coverage': coverage,

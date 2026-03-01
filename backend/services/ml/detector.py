@@ -204,7 +204,8 @@ class ObjectDetector:
 def detect_objects(
     image_path: str,
     confidence: float = 0.25,
-    classes: Optional[List[int]] = None
+    classes: Optional[List[int]] = None,
+    roi_mask: np.ndarray = None
 ) -> List[Detection]:
     """
     Detectar objetos em uma imagem.
@@ -213,6 +214,7 @@ def detect_objects(
         image_path: Caminho para a imagem
         confidence: Limiar mínimo de confiança
         classes: Lista de IDs de classes (None = todas)
+        roi_mask: Máscara binária (0/1) para filtrar detecções fora do perímetro
 
     Returns:
         Lista de Detection
@@ -225,12 +227,26 @@ def detect_objects(
 
         # Redimensionar se muito grande (para performance)
         max_size = 1920
+        scale = 1.0
         if max(img.size) > max_size:
-            ratio = max_size / max(img.size)
-            new_size = (int(img.width * ratio), int(img.height * ratio))
+            scale = max_size / max(img.size)
+            new_size = (int(img.width * scale), int(img.height * scale))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
         image_array = np.array(img)
+
+    # Redimensionar roi_mask para acompanhar a imagem se necessário
+    scaled_roi = None
+    if roi_mask is not None:
+        if scale != 1.0:
+            import cv2
+            scaled_roi = cv2.resize(
+                roi_mask.astype(np.uint8),
+                (image_array.shape[1], image_array.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        else:
+            scaled_roi = roi_mask
 
     # Executar inferência
     results = model(
@@ -256,6 +272,13 @@ def detect_objects(
             center_y = (y1 + y2) // 2
             area = (x2 - x1) * (y2 - y1)
 
+            # Filtrar detecções cujo centro esteja fora do ROI
+            if scaled_roi is not None:
+                cy = min(center_y, scaled_roi.shape[0] - 1)
+                cx = min(center_x, scaled_roi.shape[1] - 1)
+                if scaled_roi[cy, cx] == 0:
+                    continue
+
             class_name = model.names.get(cls_id, f'classe_{cls_id}')
 
             detections.append(Detection(
@@ -279,9 +302,9 @@ def detect_and_count(image_path: str, confidence: float = 0.25) -> Dict[str, int
     return counts
 
 
-def get_detection_summary(image_path: str, confidence: float = 0.25) -> Dict[str, Any]:
+def get_detection_summary(image_path: str, confidence: float = 0.25, roi_mask: np.ndarray = None) -> Dict[str, Any]:
     """Obter resumo completo das detecções."""
-    detections = detect_objects(image_path, confidence)
+    detections = detect_objects(image_path, confidence, roi_mask=roi_mask)
 
     if not detections:
         return {

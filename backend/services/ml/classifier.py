@@ -115,7 +115,8 @@ class SceneClassifier:
     def classify(
         self,
         image: np.ndarray,
-        top_k: int = 5
+        top_k: int = 5,
+        roi_mask: np.ndarray = None
     ) -> ClassificationResult:
         """
         Classificar imagem.
@@ -123,10 +124,16 @@ class SceneClassifier:
         Args:
             image: Array NumPy RGB (H, W, 3)
             top_k: Número de top classes a retornar
+            roi_mask: Máscara binária (0/1) delimitando a região de interesse
 
         Returns:
             ClassificationResult
         """
+        # Aplicar ROI mask: zerar pixels fora do perímetro
+        if roi_mask is not None:
+            image = image.copy()
+            image[roi_mask == 0] = 0
+
         # Converter para PIL
         pil_image = Image.fromarray(image)
 
@@ -194,18 +201,31 @@ def get_classifier() -> SceneClassifier:
     return _classifier
 
 
-def classify_scene(image_path: str) -> Dict[str, Any]:
+def classify_scene(image_path: str, roi_mask: np.ndarray = None) -> Dict[str, Any]:
     """
     Classificar cena de uma imagem.
 
     Args:
         image_path: Caminho para a imagem
+        roi_mask: Máscara binária (0/1) delimitando a região de interesse
 
     Returns:
         Dicionário com resultados da classificação
     """
     classifier = get_classifier()
-    result = classifier.classify_from_file(image_path)
+    if roi_mask is not None:
+        with Image.open(image_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            max_size = 4000
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            image_array = np.array(img)
+        result = classifier.classify(image_array, roi_mask=roi_mask)
+    else:
+        result = classifier.classify_from_file(image_path)
     scene_type = classifier.get_scene_type(result)
 
     return {

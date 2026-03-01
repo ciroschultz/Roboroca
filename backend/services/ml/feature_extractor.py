@@ -309,12 +309,13 @@ def detect_anomalies(image: np.ndarray, threshold: float = 2.0) -> Dict[str, Any
     }
 
 
-def extract_all_features(image_path: str) -> Dict[str, Any]:
+def extract_all_features(image_path: str, roi_mask: np.ndarray = None) -> Dict[str, Any]:
     """
     Extrair todas as características de uma imagem.
 
     Args:
         image_path: Caminho para a imagem
+        roi_mask: Máscara binária (0/1) delimitando a região de interesse
 
     Returns:
         Dicionário com todas as características
@@ -331,6 +332,20 @@ def extract_all_features(image_path: str) -> Dict[str, Any]:
             img = img.resize(new_size, Image.Resampling.LANCZOS)
 
         image = np.array(img)
+
+    # Aplicar ROI mask: zerar pixels fora do perímetro
+    if roi_mask is not None:
+        # Redimensionar roi_mask para acompanhar a imagem
+        if roi_mask.shape[:2] != image.shape[:2]:
+            resized_mask = cv2.resize(
+                roi_mask.astype(np.uint8),
+                (image.shape[1], image.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        else:
+            resized_mask = roi_mask
+        image = image.copy()
+        image[resized_mask == 0] = 0
 
     return {
         'texture': extract_texture_features(image),

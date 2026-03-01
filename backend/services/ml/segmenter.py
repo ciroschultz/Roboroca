@@ -91,7 +91,8 @@ class LandSegmenter:
     def segment(
         self,
         image: np.ndarray,
-        resize_to: int = 520
+        resize_to: int = 520,
+        roi_mask: np.ndarray = None
     ) -> SegmentationResult:
         """
         Segmentar imagem.
@@ -99,6 +100,7 @@ class LandSegmenter:
         Args:
             image: Array NumPy RGB (H, W, 3)
             resize_to: Tamanho para processamento
+            roi_mask: Máscara binária (0/1) delimitando a região de interesse
 
         Returns:
             SegmentationResult
@@ -126,8 +128,17 @@ class LandSegmenter:
             )
             mask = output.argmax(1).squeeze().cpu().numpy()
 
-        # Calcular percentuais
-        total_pixels = mask.size
+        # Aplicar ROI mask: considerar apenas pixels dentro do perímetro
+        if roi_mask is not None:
+            # Zerar pixels fora do ROI (tornam-se background)
+            mask[roi_mask == 0] = 0
+            total_pixels = int(roi_mask.sum())
+        else:
+            total_pixels = mask.size
+
+        if total_pixels == 0:
+            total_pixels = 1
+
         unique, counts = np.unique(mask, return_counts=True)
         class_counts = dict(zip(unique, counts))
 
@@ -229,18 +240,31 @@ def get_segmenter() -> LandSegmenter:
     return _segmenter
 
 
-def segment_image(image_path: str) -> Dict[str, Any]:
+def segment_image(image_path: str, roi_mask: np.ndarray = None) -> Dict[str, Any]:
     """
     Segmentar imagem e retornar resultados.
 
     Args:
         image_path: Caminho para a imagem
+        roi_mask: Máscara binária (0/1) delimitando a região de interesse
 
     Returns:
         Dicionário com resultados da segmentação
     """
     segmenter = get_segmenter()
-    result = segmenter.segment_from_file(image_path)
+    if roi_mask is not None:
+        with Image.open(image_path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            max_size = 4000
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            image_array = np.array(img)
+        result = segmenter.segment(image_array, roi_mask=roi_mask)
+    else:
+        result = segmenter.segment_from_file(image_path)
 
     return {
         'class_percentages': result.class_percentages,
