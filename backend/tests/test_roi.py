@@ -3,6 +3,7 @@ Tests for ROI (Region of Interest) analysis endpoint.
 """
 
 import os
+import shutil
 import tempfile
 
 import pytest
@@ -49,9 +50,7 @@ async def test_image_with_file(db_session: AsyncSession, test_project: Project):
     yield image
 
     # Cleanup
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    os.rmdir(tmpdir)
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.mark.asyncio

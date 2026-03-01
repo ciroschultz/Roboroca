@@ -9,6 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.user import User
 from backend.core.security import get_password_hash, verify_password
+from backend.core.rate_limit import auth_rate_limiter, login_rate_limiter
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiters():
+    """Reset rate limiter state before each test to prevent cross-test bleed."""
+    auth_rate_limiter.reset()
+    login_rate_limiter.reset()
+    yield
 
 
 # ============================================

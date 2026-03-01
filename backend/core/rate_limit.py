@@ -41,6 +41,10 @@ class RateLimiter:
 
         self._requests[ip].append(time.time())
 
+    def reset(self) -> None:
+        """Clear all tracked requests. Intended for use in tests."""
+        self._requests.clear()
+
 
 # Instancias pre-configuradas
 auth_rate_limiter = RateLimiter(max_requests=10, window_seconds=60)
