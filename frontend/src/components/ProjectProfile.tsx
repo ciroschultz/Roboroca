@@ -10,7 +10,6 @@ import {
   MapPin,
   Leaf,
   Trees,
-  Droplets,
   Mountain,
   Thermometer,
   FileText,
@@ -55,10 +54,6 @@ import {
   deleteProject,
   type Analysis,
   type EnrichedData,
-  type WeatherData,
-  type SoilData,
-  type ElevationData,
-  type GeocodingData,
   type TimelineEntry,
   type AlertItem,
 } from '@/lib/api'

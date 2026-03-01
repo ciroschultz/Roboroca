@@ -16,7 +16,6 @@ import {
   analyzeROI,
   analyzeProject,
   getImageUTMInfo,
-  getOverlayUrl,
   type Project as ApiProject,
   type UTMInfo,
   type Analysis,
@@ -34,6 +33,7 @@ import {
   MapPin,
   FolderOpen,
   PenTool,
+  Pencil,
   ChevronRight,
   Leaf,
   Trees,
@@ -44,7 +44,6 @@ import {
   Image as ImageIcon,
   MousePointer,
   Trash2,
-  Square,
   Info,
   X,
   Save,
@@ -52,7 +51,6 @@ import {
   Globe,
   Target,
   Bug,
-  Droplets,
   Play,
 } from 'lucide-react'
 import CompassRose from '@/components/map/CompassRose'
@@ -137,7 +135,7 @@ interface ImageAnalysis {
   }
 }
 
-type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser' | 'roi' | 'zone' | 'rectangle'
+type DrawingTool = 'select' | 'point' | 'polygon' | 'measurement' | 'eraser' | 'roi' | 'zone'
 
 interface Annotation {
   id?: number
@@ -179,6 +177,7 @@ export default function MapView({ projectId }: MapViewProps) {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
   const [lastPanPoint, setLastPanPoint] = useState({ x: 0, y: 0 })
   const imageContainerRef = useRef<HTMLDivElement>(null)
+  const zoomableRef = useRef<HTMLDivElement>(null)
 
   // Project mode states
   const [projects, setProjects] = useState<Project[]>([])
@@ -229,6 +228,9 @@ export default function MapView({ projectId }: MapViewProps) {
   const [imageAnalysis, setImageAnalysis] = useState<ImageAnalysis | null>(null)
   const [savingAnnotation, setSavingAnnotation] = useState(false)
   const [imageGSD, setImageGSD] = useState<ImageGSD | null>(null)
+  const [editingPointId, setEditingPointId] = useState<number | null>(null)
+  const [editingPointLabel, setEditingPointLabel] = useState('')
+  const [savingScreenshot, setSavingScreenshot] = useState(false)
 
   // Color picker dropdown
   const [showColorPicker, setShowColorPicker] = useState(false)
@@ -243,7 +245,6 @@ export default function MapView({ projectId }: MapViewProps) {
   const [showZoneDialog, setShowZoneDialog] = useState(false)
   const [pendingZonePoints, setPendingZonePoints] = useState<number[][] | null>(null)
   const [draggingVertex, setDraggingVertex] = useState<{ zoneId: number; vertexIndex: number } | null>(null)
-  const [rectangleStart, setRectangleStart] = useState<{ x: number; y: number } | null>(null)
 
   // Fullscreen
   const mapContainerRef = useRef<HTMLDivElement>(null)
@@ -287,7 +288,6 @@ export default function MapView({ projectId }: MapViewProps) {
     'eraser': 'Clique em uma anotacao para remove-la',
     'roi': 'Desenhe o perimetro da area de interesse. Duplo-clique para fechar. ESC para cancelar',
     'zone': 'Clique para adicionar vertices da zona. Duplo-clique para fechar e definir propriedades',
-    'rectangle': 'Clique no primeiro canto, depois no canto oposto para criar zona retangular',
   }
 
   // Colors for annotations
@@ -630,9 +630,12 @@ export default function MapView({ projectId }: MapViewProps) {
 
   const handleVertexMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!draggingVertex) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const inner = zoomableRef.current
+    if (!inner) return
+    const rect = inner.getBoundingClientRect()
+    const scale = zoom / 100
+    const x = (e.clientX - rect.left) / scale
+    const y = (e.clientY - rect.top) / scale
     setZones(prev => prev.map(z => {
       if (z.id !== draggingVertex.zoneId) return z
       const newPoints = [...z.data.points]
@@ -656,6 +659,49 @@ export default function MapView({ projectId }: MapViewProps) {
     }
     setDraggingVertex(null)
   }, [draggingVertex, zones])
+
+  // Update point label
+  const updatePointLabel = async (annotationId: number, newLabel: string) => {
+    try {
+      const ann = annotations.find(a => a.id === annotationId)
+      if (!ann) return
+      const updatedData = { ...ann.data, label: newLabel }
+      await apiUpdateAnnotation(annotationId, { data: updatedData as Record<string, unknown> })
+      setAnnotations(prev => prev.map(a => a.id === annotationId ? { ...a, data: updatedData } : a))
+    } catch (err) {
+      console.error('Erro ao atualizar label:', err)
+    }
+    setEditingPointId(null)
+    setEditingPointLabel('')
+  }
+
+  // Save screenshot with annotations
+  const handleSaveScreenshot = useCallback(async () => {
+    const container = zoomableRef.current
+    if (!container) return
+    setSavingScreenshot(true)
+    try {
+      const html2canvas = (await import('html2canvas')).default
+      const canvas = await html2canvas(container, {
+        backgroundColor: '#000',
+        useCORS: true,
+        allowTaint: true,
+        scale: 1,
+      })
+      const url = canvas.toDataURL('image/png')
+      const a = document.createElement('a')
+      a.href = url
+      const filename = projectImages[selectedImageIndex]?.original_filename?.replace(/\.[^/.]+$/, '') || 'mapa'
+      a.download = `${filename}_anotacoes.png`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    } catch (err) {
+      console.error('Erro ao salvar screenshot:', err)
+    } finally {
+      setSavingScreenshot(false)
+    }
+  }, [projectImages, selectedImageIndex])
 
   // Analyze full project
   const handleAnalyzeProject = async () => {
@@ -691,13 +737,26 @@ export default function MapView({ projectId }: MapViewProps) {
     })))
   }
 
+  // Convert container click coords → image-space coords (accounting for zoom/pan)
+  const toImageCoords = (e: React.MouseEvent): { x: number; y: number } | null => {
+    const inner = zoomableRef.current
+    if (!inner) return null
+    // getBoundingClientRect accounts for CSS transforms (scale + translate)
+    const rect = inner.getBoundingClientRect()
+    const scale = zoom / 100
+    // Convert screen coords to image-space coords
+    const x = (e.clientX - rect.left) / scale
+    const y = (e.clientY - rect.top) / scale
+    return { x, y }
+  }
+
   // Handle canvas click for drawing
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'select' || activeTool === 'eraser') return
 
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const coords = toImageCoords(e)
+    if (!coords) return
+    const { x, y } = coords
 
     if (activeTool === 'roi') {
       if (!currentAnnotation) {
@@ -729,24 +788,6 @@ export default function MapView({ projectId }: MapViewProps) {
           ...currentAnnotation,
           data: { ...currentAnnotation.data, points },
         })
-      }
-      return
-    }
-
-    if (activeTool === 'rectangle') {
-      if (!rectangleStart) {
-        setRectangleStart({ x, y })
-      } else {
-        // Second click = opposite corner → create rectangle zone
-        const x1 = Math.min(rectangleStart.x, x)
-        const y1 = Math.min(rectangleStart.y, y)
-        const x2 = Math.max(rectangleStart.x, x)
-        const y2 = Math.max(rectangleStart.y, y)
-        const rectPoints: number[][] = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-        const areaM2 = calculatePolygonArea(rectPoints)
-        setPendingZonePoints(rectPoints)
-        setShowZoneDialog(true)
-        setRectangleStart(null)
       }
       return
     }
@@ -1251,88 +1292,81 @@ export default function MapView({ projectId }: MapViewProps) {
                 </div>
 
                 {/* Toolbar do mapa */}
-                <div className="absolute top-14 left-4 right-4 z-20 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="absolute top-14 left-4 right-4 z-20 flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => setSelectedProject(null)}
-                      className="px-3 py-2 bg-gray-800/90 hover:bg-gray-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                      className="px-3 py-2 bg-gray-800/90 hover:bg-gray-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2 shrink-0"
                     >
                       ← Voltar
                     </button>
 
                     {/* Toolbar de ferramentas de desenho */}
-                    <div className="flex items-center gap-1 bg-gray-800/90 rounded-lg p-1">
+                    <div className="flex items-center gap-0.5 bg-gray-800/90 rounded-lg p-1 flex-wrap">
                       <button
                         onClick={() => setActiveTool('select')}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'select' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Selecionar"
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'select' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Selecionar (S)"
                       >
-                        <MousePointer size={18} />
+                        <MousePointer size={16} />
                       </button>
                       <button
                         onClick={() => setActiveTool('point')}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'point' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Adicionar marcador"
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'point' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Marcador (P)"
                       >
-                        <MapPin size={18} />
+                        <MapPin size={16} />
                       </button>
                       <button
                         onClick={() => setActiveTool('polygon')}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'polygon' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Desenhar poligono"
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'polygon' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Poligono"
                       >
-                        <PenTool size={18} />
+                        <PenTool size={16} />
                       </button>
                       <button
                         onClick={() => setActiveTool('roi')}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'roi' ? 'bg-blue-500 text-white' : 'text-blue-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Desenhar ROI (Region of Interest) - analise dentro do perimetro"
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'roi' ? 'bg-blue-500 text-white' : 'text-blue-400 hover:text-white hover:bg-gray-700'}`}
+                        title="ROI"
                       >
-                        <Target size={18} />
+                        <Target size={16} />
                       </button>
-                      <div className="w-px h-6 bg-gray-600 mx-0.5" />
+                      <div className="w-px h-5 bg-gray-600" />
                       <button
-                        onClick={() => { setActiveTool('zone'); setRectangleStart(null) }}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'zone' ? 'bg-orange-500 text-white' : 'text-orange-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Desenhar zona de cultivo (poligono)"
+                        onClick={() => setActiveTool('zone')}
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'zone' ? 'bg-orange-500 text-white' : 'text-orange-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Zona de cultivo"
                       >
-                        <Hexagon size={18} />
+                        <Hexagon size={16} />
                       </button>
-                      <button
-                        onClick={() => { setActiveTool('rectangle'); setRectangleStart(null) }}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'rectangle' ? 'bg-orange-500 text-white' : 'text-orange-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Desenhar zona retangular"
-                      >
-                        <Square size={18} />
-                      </button>
-                      <div className="w-px h-6 bg-gray-600 mx-0.5" />
+                      <div className="w-px h-5 bg-gray-600" />
                       <button
                         onClick={() => setActiveTool('measurement')}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
                         title="Medir distancia"
                       >
-                        <Ruler size={18} />
+                        <Ruler size={16} />
                       </button>
                       <button
                         onClick={() => setActiveTool('eraser')}
-                        className={`p-2 rounded-lg transition-colors ${activeTool === 'eraser' ? 'bg-red-500 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Apagar anotacao"
+                        className={`p-1.5 rounded transition-colors ${activeTool === 'eraser' ? 'bg-red-500 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                        title="Apagar"
                       >
-                        <Trash2 size={18} />
+                        <Trash2 size={16} />
                       </button>
 
                       {/* Seletor de cor */}
-                      <div className="w-px h-6 bg-gray-600 mx-1" />
+                      <div className="w-px h-5 bg-gray-600" />
                       <div className="relative" ref={colorPickerRef}>
                         <button
                           onClick={() => setShowColorPicker(v => !v)}
-                          className={`p-2 rounded-lg transition-colors ${showColorPicker ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
+                          className={`p-1.5 rounded transition-colors ${showColorPicker ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
                           title="Selecionar cor"
                         >
-                          <Palette size={18} style={{ color: selectedColor }} />
+                          <Palette size={16} style={{ color: selectedColor }} />
                         </button>
                         {showColorPicker && (
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-2 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-30 grid grid-cols-4 gap-1.5">
+                          <div className="absolute top-full left-0 mt-2 p-2 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-50 grid grid-cols-4 gap-1.5 min-w-[140px]">
                             {annotationColors.map(color => (
                               <button
                                 key={color}
@@ -1348,36 +1382,44 @@ export default function MapView({ projectId }: MapViewProps) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 shrink-0">
                     <button
                       onClick={() => setShowInfoPanel(!showInfoPanel)}
-                      className={`p-2 rounded-lg transition-colors ${showInfoPanel ? 'bg-[#6AAF3D] text-white' : 'bg-gray-800/90 text-white hover:bg-gray-700'}`}
-                      title="Painel de informacoes"
+                      className={`p-1.5 rounded-lg transition-colors ${showInfoPanel ? 'bg-[#6AAF3D] text-white' : 'bg-gray-800/90 text-white hover:bg-gray-700'}`}
+                      title="Info"
                     >
-                      <Info size={18} />
+                      <Info size={16} />
                     </button>
                     <button
                       onClick={handleExportGeoJSON}
                       disabled={exportingGeoJSON || !projectImages[selectedImageIndex]}
-                      className="p-2 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
-                      title="Exportar anotacoes como GeoJSON"
+                      className="p-1.5 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      title="Exportar GeoJSON"
                     >
-                      {exportingGeoJSON ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
+                      {exportingGeoJSON ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
+                    </button>
+                    <button
+                      onClick={handleSaveScreenshot}
+                      disabled={savingScreenshot || !currentImageUrl}
+                      className="p-1.5 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      title="Salvar imagem com anotacoes"
+                    >
+                      {savingScreenshot ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     </button>
                     <button
                       onClick={handleExportImage}
                       disabled={!currentImageUrl}
-                      className="p-2 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
-                      title="Exportar imagem"
+                      className="p-1.5 bg-gray-800/90 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      title="Download imagem original"
                     >
-                      <Download size={18} />
+                      <Download size={16} />
                     </button>
                     <button
                       onClick={toggleFullscreen}
-                      className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                      className="p-1.5 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
                       title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
                     >
-                      {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                      {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
                   </div>
                 </div>
@@ -1558,6 +1600,7 @@ export default function MapView({ projectId }: MapViewProps) {
                     style={{ cursor: draggingVertex ? 'grabbing' : activeTool === 'select' ? (isPanning ? 'grabbing' : 'grab') : activeTool === 'eraser' ? 'not-allowed' : 'crosshair' }}
                   >
                     <div
+                      ref={zoomableRef}
                       className="relative min-w-full min-h-full"
                       style={{
                         transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom / 100})`,
@@ -1810,16 +1853,48 @@ export default function MapView({ projectId }: MapViewProps) {
                                 fill={ann.data.color || '#FF0000'}
                                 stroke="white"
                                 strokeWidth={2}
-                                style={{ pointerEvents: activeTool === 'eraser' ? 'auto' : 'none', cursor: activeTool === 'eraser' ? 'pointer' : 'default' }}
+                                style={{ pointerEvents: activeTool === 'eraser' || activeTool === 'select' ? 'auto' : 'none', cursor: activeTool === 'eraser' ? 'pointer' : activeTool === 'select' ? 'pointer' : 'default' }}
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   if (activeTool === 'eraser' && ann.id) deleteAnnotation(ann.id)
                                 }}
                               />
                               {ann.data.label && (
-                                <text x={(ann.data.x || 0) + 12} y={(ann.data.y || 0) + 4} fill="white" fontSize={12} fontWeight="bold">
-                                  {ann.data.label}
-                                </text>
+                                <>
+                                  <rect
+                                    x={(ann.data.x || 0) + 10}
+                                    y={(ann.data.y || 0) - 9}
+                                    width={Math.max(60, ann.data.label.length * 7 + 12)}
+                                    height={20}
+                                    fill="rgba(0,0,0,0.75)"
+                                    rx={4}
+                                    style={{ pointerEvents: activeTool === 'select' ? 'auto' : 'none', cursor: activeTool === 'select' ? 'pointer' : 'default' }}
+                                    onDoubleClick={(e) => {
+                                      e.stopPropagation()
+                                      if (ann.id) {
+                                        setEditingPointId(ann.id)
+                                        setEditingPointLabel(ann.data.label || '')
+                                      }
+                                    }}
+                                  />
+                                  <text
+                                    x={(ann.data.x || 0) + 16}
+                                    y={(ann.data.y || 0) + 5}
+                                    fill="white"
+                                    fontSize={12}
+                                    fontWeight="bold"
+                                    style={{ pointerEvents: activeTool === 'select' ? 'auto' : 'none', cursor: activeTool === 'select' ? 'pointer' : 'default' }}
+                                    onDoubleClick={(e) => {
+                                      e.stopPropagation()
+                                      if (ann.id) {
+                                        setEditingPointId(ann.id)
+                                        setEditingPointLabel(ann.data.label || '')
+                                      }
+                                    }}
+                                  >
+                                    {ann.data.label}
+                                  </text>
+                                </>
                               )}
                             </g>
                           )
@@ -1914,40 +1989,51 @@ export default function MapView({ projectId }: MapViewProps) {
                       })}
                       {/* Desenho em progresso */}
                       {currentAnnotation?.type === 'measurement' && currentAnnotation.data.start && (
-                        <circle cx={currentAnnotation.data.start.x} cy={currentAnnotation.data.start.y} r={5} fill={selectedColor} stroke="white" strokeWidth={2} />
+                        <circle cx={currentAnnotation.data.start.x} cy={currentAnnotation.data.start.y} r={6} fill={selectedColor} stroke="white" strokeWidth={2} />
                       )}
                       {currentAnnotation?.type === 'polygon' && currentAnnotation.data.points && currentAnnotation.data.points.length > 0 && (
-                        <polyline
-                          points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
-                          fill="none"
-                          stroke={selectedColor}
-                          strokeWidth={2}
-                          strokeDasharray="5,5"
-                        />
+                        <>
+                          <polyline
+                            points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
+                            fill="none"
+                            stroke={selectedColor}
+                            strokeWidth={2}
+                            strokeDasharray="5,5"
+                          />
+                          {currentAnnotation.data.points.map((p, i) => (
+                            <circle key={`poly-pt-${i}`} cx={p[0]} cy={p[1]} r={6} fill={selectedColor} stroke="white" strokeWidth={2} />
+                          ))}
+                        </>
                       )}
                       {/* ROI em progresso */}
                       {currentAnnotation?.type === 'roi' && currentAnnotation.data.points && currentAnnotation.data.points.length > 0 && (
-                        <polyline
-                          points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
-                          fill="none"
-                          stroke="#3B82F6"
-                          strokeWidth={2.5}
-                          strokeDasharray="8,4"
-                        />
+                        <>
+                          <polyline
+                            points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
+                            fill="none"
+                            stroke="#3B82F6"
+                            strokeWidth={2.5}
+                            strokeDasharray="8,4"
+                          />
+                          {currentAnnotation.data.points.map((p, i) => (
+                            <circle key={`roi-pt-${i}`} cx={p[0]} cy={p[1]} r={6} fill="#3B82F6" stroke="white" strokeWidth={2} />
+                          ))}
+                        </>
                       )}
                       {/* Zona em progresso */}
                       {currentAnnotation?.type === 'zone' && currentAnnotation.data.points && currentAnnotation.data.points.length > 0 && (
-                        <polyline
-                          points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
-                          fill="none"
-                          stroke="#FF6B35"
-                          strokeWidth={2.5}
-                          strokeDasharray="6,3"
-                        />
-                      )}
-                      {/* Retangulo em progresso */}
-                      {activeTool === 'rectangle' && rectangleStart && (
-                        <circle cx={rectangleStart.x} cy={rectangleStart.y} r={5} fill="#FF6B35" stroke="white" strokeWidth={2} />
+                        <>
+                          <polyline
+                            points={currentAnnotation.data.points.map(p => p.join(',')).join(' ')}
+                            fill="none"
+                            stroke="#FF6B35"
+                            strokeWidth={2.5}
+                            strokeDasharray="6,3"
+                          />
+                          {currentAnnotation.data.points.map((p, i) => (
+                            <circle key={`zone-pt-${i}`} cx={p[0]} cy={p[1]} r={6} fill="#FF6B35" stroke="white" strokeWidth={2} />
+                          ))}
+                        </>
                       )}
 
                       {/* Zonas de cultivo salvas */}
@@ -2262,10 +2348,23 @@ export default function MapView({ projectId }: MapViewProps) {
                           <div className="space-y-1 max-h-32 overflow-y-auto">
                             {annotations.map((ann, idx) => (
                               <div key={ann.id || idx} className="flex items-center justify-between p-1.5 bg-gray-700/30 rounded text-xs">
-                                <span className="text-white capitalize">{ann.type}</span>
-                                <div className="flex items-center gap-1">
-                                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: ann.data.color || '#FF0000' }} />
-                                  {ann.id && activeTool === 'eraser' && (
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: ann.data.color || '#FF0000' }} />
+                                  <span className="text-white truncate">
+                                    {ann.data.label || ann.type}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  {ann.id && ann.type === 'point' && (
+                                    <button
+                                      onClick={() => { setEditingPointId(ann.id!); setEditingPointLabel(ann.data.label || '') }}
+                                      className="p-1 hover:bg-gray-600 rounded"
+                                      title="Renomear ponto"
+                                    >
+                                      <Pencil size={12} className="text-gray-400" />
+                                    </button>
+                                  )}
+                                  {ann.id && (
                                     <button onClick={() => deleteAnnotation(ann.id!)} className="p-1 hover:bg-red-500/20 rounded">
                                       <Trash2 size={12} className="text-red-400" />
                                     </button>
@@ -2559,6 +2658,41 @@ export default function MapView({ projectId }: MapViewProps) {
           onSave={selectedZoneId ? handleUpdateZone : handleSaveZone}
           onCancel={handleCancelZoneDialog}
         />
+      )}
+
+      {/* Dialog para editar nome do ponto */}
+      {editingPointId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-800 rounded-xl border border-gray-600 shadow-2xl w-[320px] p-4">
+            <h3 className="text-white font-semibold mb-3">Renomear Ponto</h3>
+            <input
+              type="text"
+              value={editingPointLabel}
+              onChange={e => setEditingPointLabel(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') updatePointLabel(editingPointId, editingPointLabel)
+                if (e.key === 'Escape') { setEditingPointId(null); setEditingPointLabel('') }
+              }}
+              placeholder="Nome do ponto"
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-[#6AAF3D] mb-3"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setEditingPointId(null); setEditingPointLabel('') }}
+                className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => updatePointLabel(editingPointId, editingPointLabel)}
+                className="flex-1 px-4 py-2 bg-[#6AAF3D] hover:bg-[#5a9a34] text-white text-sm font-medium rounded-lg"
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
