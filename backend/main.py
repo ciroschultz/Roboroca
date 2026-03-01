@@ -361,30 +361,54 @@ body {
 }
 """
 
+description = """
+# Roboroça API 🌱
+
+Sistema inteligente de analise de imagens aereas para agricultura.
+
+## Funcionalidades
+
+* **Projetos** — Crie e gerencie projetos de monitoramento agricola
+* **Imagens** — Upload de drone, satelite e video; captura por GPS
+* **Analise ML** — 8 servicos de IA (vegetacao, arvores, pragas, biomassa, NDVI...)
+* **GIS** — Anotacoes, zonas de cultivo, perimetro ROI, export GeoJSON
+* **Relatorios** — PDF, dashboard comparativo, timeline evolutiva
+* **Tempo Real** — WebSocket para progresso de analises
+
+## Autenticacao
+
+Todos os endpoints (exceto health e login) requerem token JWT via header:
+```
+Authorization: Bearer <token>
+```
+"""
+
+tags_metadata = [
+    {"name": "Health", "description": "Status e saude da API"},
+    {"name": "Auth", "description": "Autenticacao, registro e gerenciamento de conta"},
+    {"name": "Projects", "description": "CRUD de projetos, analises, comparacoes e timeline"},
+    {"name": "Images", "description": "Upload, metadados, perimetro e captura satelital"},
+    {"name": "Analysis", "description": "Analises ML: vegetacao, saude, pragas, biomassa, NDVI, PDF"},
+    {"name": "Annotations", "description": "Anotacoes GIS, zonas de cultivo e export GeoJSON"},
+    {"name": "WebSocket", "description": "Progresso em tempo real de analises via WebSocket"},
+]
+
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description=f"""
-## 🤖 {settings.PROJECT_NAME}
-
-{settings.DESCRIPTION}
-
-### Funcionalidades
-
-- **🔐 Autenticação**: Login e registro de usuários com JWT
-- **📁 Projetos**: Gerenciamento de projetos de análise
-- **🖼️ Imagens**: Upload e processamento de imagens de drone/satélite
-- **📊 Análises**: Análise de vegetação, saúde de plantas, uso do solo
-
-### Links Úteis
-
-- [Frontend](http://localhost:3000) - Interface do usuário
-- [Health Check]({settings.API_V1_PREFIX}/health) - Status da API
-    """,
+    title="Roboroça API",
+    description=description,
     version=settings.VERSION,
+    contact={
+        "name": "Roboroça",
+        "url": "http://localhost:3000",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
     docs_url=None,  # Desabilita docs padrão
     redoc_url=None,  # Desabilita redoc padrão
     lifespan=lifespan,
+    openapi_tags=tags_metadata,
 )
 
 # Configurar CORS - Restritivo em produção, aberto em dev
@@ -406,7 +430,7 @@ app.add_middleware(
 
 # Registrar rotas
 app.include_router(health.router, prefix=settings.API_V1_PREFIX, tags=["Health"])
-app.include_router(auth.router, prefix=settings.API_V1_PREFIX, tags=["Authentication"])
+app.include_router(auth.router, prefix=settings.API_V1_PREFIX, tags=["Auth"])
 app.include_router(projects.router, prefix=settings.API_V1_PREFIX, tags=["Projects"])
 app.include_router(images.router, prefix=settings.API_V1_PREFIX, tags=["Images"])
 app.include_router(analysis.router, prefix=settings.API_V1_PREFIX, tags=["Analysis"])
