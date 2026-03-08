@@ -1,0 +1,1 @@
+"""Vertente B - Calculadora Agraria."""

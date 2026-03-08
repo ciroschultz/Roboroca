@@ -8,5 +8,6 @@ from backend.models.project import Project
 from backend.models.image import Image
 from backend.models.analysis import Analysis
 from backend.models.annotation import Annotation
+from backend.models.api_key import ApiKey
 
-__all__ = ["User", "Project", "Image", "Analysis", "Annotation"]
+__all__ = ["User", "Project", "Image", "Analysis", "Annotation", "ApiKey"]

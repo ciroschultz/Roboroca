@@ -1,10 +1,10 @@
 """
-Authentication dependencies.
+Authentication dependencies — JWT + API Key dual auth.
 """
 
 from typing import Optional
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer, APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -12,19 +12,41 @@ from backend.core.database import get_db
 from backend.core.security import decode_access_token
 from backend.models.user import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    token: Optional[str] = Depends(oauth2_scheme),
+    api_key: Optional[str] = Depends(api_key_header),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Obter usuário atual a partir do token JWT."""
+    """Obter usuario atual via JWT ou API Key."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Credenciais inválidas",
+        detail="Credenciais invalidas",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # Tentar API Key primeiro (se presente)
+    if api_key:
+        from backend.core.api_keys import validate_api_key
+
+        api_key_obj = await validate_api_key(api_key, db)
+        if api_key_obj is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key invalida ou expirada",
+            )
+        result = await db.execute(select(User).where(User.id == api_key_obj.user_id))
+        user = result.scalar_one_or_none()
+        if user is None or not user.is_active:
+            raise credentials_exception
+        return user
+
+    # Tentar JWT
+    if not token:
+        raise credentials_exception
 
     payload = decode_access_token(token)
     if payload is None:
@@ -34,7 +56,6 @@ async def get_current_user(
     if user_id is None:
         raise credentials_exception
 
-    # Buscar usuário no banco
     result = await db.execute(select(User).where(User.id == int(user_id)))
     user = result.scalar_one_or_none()
 
@@ -44,46 +65,46 @@ async def get_current_user(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuário inativo"
+            detail="Usuario inativo",
         )
 
     return user
 
 
 async def get_current_active_user(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ) -> User:
-    """Verificar se usuário está ativo."""
+    """Verificar se usuario esta ativo."""
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuário inativo"
+            detail="Usuario inativo",
         )
     return current_user
 
 
 async def get_current_superuser(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ) -> User:
-    """Verificar se usuário é superusuário."""
+    """Verificar se usuario e superusuario."""
     if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permissão negada. Requer privilégios de administrador."
+            detail="Permissao negada. Requer privilegios de administrador.",
         )
     return current_user
 
 
-# Dependency opcional - não requer autenticação mas retorna usuário se autenticado
 async def get_optional_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    api_key: Optional[str] = Depends(api_key_header),
+    db: AsyncSession = Depends(get_db),
 ) -> Optional[User]:
-    """Obter usuário atual se autenticado, ou None."""
-    if not token:
+    """Obter usuario atual se autenticado, ou None."""
+    if not token and not api_key:
         return None
 
     try:
-        return await get_current_user(token, db)
+        return await get_current_user(token, api_key, db)
     except HTTPException:
         return None

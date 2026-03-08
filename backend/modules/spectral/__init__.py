@@ -1,0 +1,1 @@
+"""Vertente E - Analise Espectral."""

@@ -58,6 +58,7 @@ async def init_db():
     from backend.models.project import Project
     from backend.models.image import Image
     from backend.models.analysis import Analysis
+    from backend.models.api_key import ApiKey
 
     async with engine.begin() as conn:
         # Criar todas as tabelas

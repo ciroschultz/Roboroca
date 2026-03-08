@@ -4,9 +4,11 @@ Ponto de entrada da API FastAPI.
 """
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core.logging_config import setup_logging
 
@@ -18,7 +20,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 
 from backend.api.routes import health, images, projects, analysis, auth, annotations
+from backend.api.routes.api_keys import router as api_keys_router
 from backend.api.routes.websocket import router as ws_router
+from backend.modules.aerial.router import router as aerial_router
 from backend.core.config import settings
 from backend.core.database import init_db, close_db, async_session_maker
 
@@ -377,9 +381,10 @@ Sistema inteligente de analise de imagens aereas para agricultura.
 
 ## Autenticacao
 
-Todos os endpoints (exceto health e login) requerem token JWT via header:
+Todos os endpoints (exceto health e login) requerem autenticacao via:
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <token>   (JWT - usuarios dos frontends)
+X-API-Key: rbr_live_...         (API Key - clientes externos)
 ```
 """
 
@@ -388,7 +393,9 @@ tags_metadata = [
     {"name": "Auth", "description": "Autenticacao, registro e gerenciamento de conta"},
     {"name": "Projects", "description": "CRUD de projetos, analises, comparacoes e timeline"},
     {"name": "Images", "description": "Upload, metadados, perimetro e captura satelital"},
-    {"name": "Analysis", "description": "Analises ML: vegetacao, saude, pragas, biomassa, NDVI, PDF"},
+    {"name": "Aerial - Descricao de Imagens", "description": "Descricao de imagens aereas: vegetacao, saude, pragas, biomassa, NDVI, PDF"},
+    {"name": "Analysis", "description": "Alias de compatibilidade — mesmos endpoints de Aerial"},
+    {"name": "API Keys", "description": "CRUD de chaves de API para acesso externo"},
     {"name": "Annotations", "description": "Anotacoes GIS, zonas de cultivo e export GeoJSON"},
     {"name": "WebSocket", "description": "Progresso em tempo real de analises via WebSocket"},
 ]
@@ -428,12 +435,28 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+
+# Middleware X-Request-ID
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+        logger.debug("request_id=%s %s %s", request_id, request.method, request.url.path)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+app.add_middleware(RequestIDMiddleware)
+
 # Registrar rotas
 app.include_router(health.router, prefix=settings.API_V1_PREFIX, tags=["Health"])
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX, tags=["Auth"])
 app.include_router(projects.router, prefix=settings.API_V1_PREFIX, tags=["Projects"])
 app.include_router(images.router, prefix=settings.API_V1_PREFIX, tags=["Images"])
+app.include_router(aerial_router, prefix=f"{settings.API_V1_PREFIX}/aerial", tags=["Aerial - Descricao de Imagens"])
 app.include_router(analysis.router, prefix=settings.API_V1_PREFIX, tags=["Analysis"])
+app.include_router(api_keys_router, prefix=settings.API_V1_PREFIX, tags=["API Keys"])
 app.include_router(annotations.router, prefix=settings.API_V1_PREFIX, tags=["Annotations"])
 app.include_router(ws_router, tags=["WebSocket"])
 
