@@ -62,8 +62,8 @@
 
 | #  | Item                            | O que falta                                         | Esforco |
 |----|---------------------------------|-----------------------------------------------------|---------|
-| 9  | Refatorar MapView.tsx           | ~2700 linhas, funcional mas dificil de manter       | 6h      |
-| 10 | Refatorar ProjectProfile.tsx    | ~2788 linhas, mesmo problema                        | 6h      |
+| 9  | ~~Refatorar MapView.tsx~~       | **FEITO** — 8 sub-componentes + hook                | —       |
+| 10 | ~~Refatorar ProjectProfile.tsx~~| **FEITO** — 7 sub-componentes + hook                | —       |
 | 11 | PWA offline sync                | Service worker instalado, sync background pendente  | 4h      |
 | 12 | Termos de uso / privacidade     | Documentacao legal para o site                      | 2h      |
 | 13 | Performance audit (Lighthouse)  | Otimizacao de bundle size, lazy loading              | 3h      |
@@ -113,7 +113,7 @@ plaintext). Suporte a scopes, rate limits por chave, e expiracao. CRUD completo 
 | Etapa | Descricao                               | Status       |
 |-------|-----------------------------------------|--------------|
 | 1     | Security (SECRET_KEY, rate limit, magic bytes, downsampling) | COMPLETA |
-| 2     | Refatoracao (parcial — MapView/ProjectProfile pendentes)     | PARCIAL  |
+| 2     | Refatoracao (MapView + ProjectProfile refatorados)           | COMPLETA |
 | 3     | ML Validation (thresholds adaptativos para satelite)         | COMPLETA |
 | 4     | Testes (119 backend + 68 frontend + Playwright E2E setup)   | COMPLETA |
 | 5     | Producao (PostgreSQL, logging JSON, CI/CD, Docker Compose)   | COMPLETA |

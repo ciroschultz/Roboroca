@@ -12,7 +12,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14%2B-black.svg?logo=next.js)](https://nextjs.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C.svg?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Tests](https://img.shields.io/badge/testes-77%20passando-success.svg)](#testes)
+[![Tests](https://img.shields.io/badge/testes-228%20passando-success.svg)](#testes)
 [![Docker](https://img.shields.io/badge/Docker-suportado-2496ED.svg?logo=docker&logoColor=white)](docker/)
 
 </div>
@@ -41,7 +41,18 @@
 
 ## Sobre o Projeto
 
-O **Roboroça** é uma plataforma full-stack que combina visão computacional, deep learning e geoprocessamento para extrair inteligência de imagens de drone e satélite. O sistema processa imagens RGB e multiespectrais, executa pipelines de machine learning e entrega resultados em dashboards interativos, mapas anotados e relatórios PDF.
+O **Roboroça** é um ecossistema de 6 projetos interconectados que combina visão computacional, deep learning e geoprocessamento para extrair inteligência de imagens de drone e satélite. O sistema processa imagens RGB e multiespectrais, executa pipelines de machine learning e entrega resultados em dashboards interativos, mapas anotados e relatórios PDF.
+
+### Ecossistema de Projetos
+
+| Projeto | Subdomain | Descricao |
+|---------|-----------|-----------|
+| **Aerial** (este repo) | `aerial.roboroca.com` | Analise ML de imagens aereas |
+| **Home** | `roboroca.com` | Landing page institucional |
+| **Calculator** | `calc.roboroca.com` | Calculadora de insumos agricolas |
+| **Precision** | `precision.roboroca.com` | Agricultura de precisao |
+| **Equipment** | `equipment.roboroca.com` | Catalogo de equipamentos |
+| **Spectral** | `spectral.roboroca.com` | Analise espectral (NDVI, indices) |
 
 **Casos de uso:**
 - Monitoramento de lavouras e pastagens
@@ -243,9 +254,9 @@ roboroca/
 │           ├── Dashboard/             # Cards, gráficos, comparativo entre projetos
 │           ├── UploadZone.tsx         # Drag-and-drop multi-imagem + vídeo
 │           ├── ProjectsList.tsx       # Lista com métricas por fazenda
-│           ├── ProjectProfile.tsx     # Perfil (Overview · Mapa · Análise · Relatório)
+│           ├── ProjectProfile/        # Perfil (Overview · Mapa · Análise · Relatório)
 │           ├── ImageAnalysisPanel.tsx # 8 análises ML por imagem
-│           ├── MapView.tsx            # Canvas georreferenciado
+│           ├── MapView/              # Canvas georreferenciado (8 sub-componentes)
 │           ├── map/
 │           │   ├── CompassRose.tsx    # Rosa dos ventos
 │           │   ├── CoordinateGrid.tsx # Grade de coordenadas
@@ -464,7 +475,7 @@ GET    /v1/annotations/{image_id}/export/geojson → Exportar GeoJSON
 DELETE /v1/annotations/{image_id}/all → Limpar todas as anotações
 ```
 
-> **Total: 60 endpoints** · Autenticação via Bearer Token (JWT) · Documentação interativa em `/api/v1/docs`
+> **Total: 65+ endpoints** · Autenticação via Bearer Token (JWT) ou API Key (`X-API-Key`) · Documentação interativa em `/api/v1/docs`
 
 ---
 
@@ -500,21 +511,20 @@ Todas as APIs externas são **gratuitas** e **sem autenticação**. Os resultado
 
 ## Testes
 
-O projeto conta com **77 testes automatizados** cobrindo rotas, serviços e modelos de dados.
+O projeto conta com **228 testes automatizados** (119 backend + 68 frontend + 41 E2E).
 
 ```bash
-# Ativar ambiente virtual
-venv\Scripts\activate   # Windows
-source venv/bin/activate  # Linux/macOS
+# Backend (119 testes)
+python -m pytest backend/tests/ -x -q
 
-# Rodar todos os testes
-pytest tests/ -v
+# Frontend (68 testes)
+cd frontend && npx jest
 
-# Com cobertura de código
-pytest tests/ -v --cov=backend --cov-report=term-missing
+# E2E funcional (41 testes — requer backend rodando)
+python run_full_test.py
 
-# Rodar um módulo específico
-pytest tests/test_analysis.py -v
+# Criar usuario de teste: flavio@gmail.com / flavio123
+python create_test_user.py
 ```
 
 ---
@@ -531,21 +541,32 @@ docker compose up --build
 docker compose up backend db redis
 ```
 
-### Produção
+### Produção (Multi-Projeto)
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d
+# Configurar .env (DOMAIN, POSTGRES_PASSWORD, SECRET_KEY)
+docker compose -f docker-compose.prod.yml up -d --build
+
+# SSL (primeiro deploy)
+docker compose -f docker-compose.prod.yml run certbot \
+  certonly --webroot -w /var/www/certbot \
+  -d roboroca.com -d "*.roboroca.com"
 ```
 
-### Serviços
+### Serviços (10 containers)
 
-| Container | Porta | Descrição |
+| Container | Porta | Subdomain |
 |-----------|-------|-----------|
-| `roboroca-backend` | 8000 | FastAPI + Uvicorn |
-| `roboroca-frontend` | 3000 | Next.js |
+| `roboroca-nginx` | 80, 443 | Reverse proxy + SSL |
+| `roboroca-backend` | 8000 | `api.roboroca.com` |
+| `roboroca-frontend` | 3000 | `aerial.roboroca.com` |
+| `roboroca-home` | 3000 | `roboroca.com` |
+| `roboroca-calculator` | 3000 | `calc.roboroca.com` |
+| `roboroca-precision` | 3000 | `precision.roboroca.com` |
+| `roboroca-equipment` | 3000 | `equipment.roboroca.com` |
+| `roboroca-spectral` | 3000 | `spectral.roboroca.com` |
 | `roboroca-db` | 5432 | PostgreSQL + PostGIS |
-| `roboroca-redis` | 6379 | Cache e broker Celery |
-| `roboroca-celery` | — | Worker de tarefas assíncronas |
+| `roboroca-certbot` | — | Let's Encrypt auto-renewal |
 
 ---
 
@@ -596,11 +617,13 @@ Annotation
 | 5 | Export GeoJSON, alertas, Docker, CI/CD inicial | ✅ Concluída |
 | 6 | UX polish, notificações, dark mode, relatórios redesenhados | ✅ Concluída |
 | 7 | ROI, UTM converter, componentes profissionais de mapa | ✅ Concluída |
-| 8 | Detecção de pragas e doenças (ML) | 🔄 Em desenvolvimento |
-| 9 | Cálculo de biomassa (ML) | 🔄 Em desenvolvimento |
-| 10 | Modo offline / PWA | 📋 Planejado |
-| 11 | Deploy produção completo | 📋 Planejado |
-| 12 | WebSocket (progresso em tempo real), i18n, mobile | 📋 Planejado |
+| 8 | Detecção de pragas e doenças (ML) | ✅ Concluída |
+| 9 | Cálculo de biomassa (ML) | ✅ Concluída |
+| 10 | Modo offline / PWA (parcial) | ✅ Service worker instalado |
+| 11 | Deploy produção (Docker multi-projeto) | ✅ Concluída |
+| 12 | WebSocket, i18n (3 idiomas), mobile CSS | ✅ Concluída |
+| A-J | Comparação, GPS, GIS, ROI, Confidence, UX, Dashboard, Video | ✅ Concluídas |
+| Audit | Security hardening, API keys, JWT blacklist, refactoring | ✅ Concluída |
 
 ---
 
