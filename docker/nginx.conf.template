@@ -1,3 +1,15 @@
+# =============================================
+# Roboroça - Nginx Configuration (Multi-Project)
+# =============================================
+# Subdomains:
+#   roboroca.com         → home:3000
+#   aerial.roboroca.com  → frontend:3000
+#   calc.roboroca.com    → calculator:3000
+#   precision.roboroca.com → precision:3000
+#   equipment.roboroca.com → equipment:3000
+#   spectral.roboroca.com  → spectral:3000
+#   api.roboroca.com     → backend:8000
+
 upstream frontend {
     server frontend:3000;
 }
@@ -6,10 +18,33 @@ upstream backend {
     server backend:8000;
 }
 
-# HTTP → HTTPS redirect
+upstream home {
+    server home:3000;
+}
+
+upstream calculator {
+    server calculator:3000;
+}
+
+upstream precision {
+    server precision:3000;
+}
+
+upstream equipment {
+    server equipment:3000;
+}
+
+upstream spectral {
+    server spectral:3000;
+}
+
+# ─── Shared SSL and security settings ───
+# (included via map to avoid duplication)
+
+# HTTP → HTTPS redirect (all subdomains)
 server {
     listen 80;
-    server_name ${DOMAIN};
+    server_name ${DOMAIN} *.${DOMAIN};
 
     # Let's Encrypt challenge
     location /.well-known/acme-challenge/ {
@@ -21,21 +56,16 @@ server {
     }
 }
 
-# HTTPS server
+# ─── API subdomain (api.roboroca.com) ───
 server {
     listen 443 ssl;
-    server_name ${DOMAIN};
+    server_name api.${DOMAIN};
 
-    # SSL certificates (Let's Encrypt)
     ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-
-    # SSL configuration
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
 
     client_max_body_size 500M;
 
@@ -45,18 +75,17 @@ server {
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self'" always;
-    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(self)" always;
 
-    # Gzip compression
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+    # CORS for API
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-API-Key, X-Request-ID" always;
 
-    # API proxy
-    location /api/ {
+    if ($request_method = 'OPTIONS') {
+        return 204;
+    }
+
+    location / {
         proxy_pass http://backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -66,7 +95,7 @@ server {
         proxy_connect_timeout 30s;
     }
 
-    # WebSocket proxy
+    # WebSocket
     location /ws/ {
         proxy_pass http://backend;
         proxy_http_version 1.1;
@@ -76,8 +105,49 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 86400s;
     }
+}
 
-    # Frontend proxy
+# ─── Aerial frontend (aerial.roboroca.com) ───
+server {
+    listen 443 ssl;
+    server_name aerial.${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    client_max_body_size 500M;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    # API proxy (so frontend can use /api/v1 paths)
+    location /api/ {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+
+    location /ws/ {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400s;
+    }
+
     location / {
         proxy_pass http://frontend;
         proxy_set_header Host $host;
@@ -89,11 +159,138 @@ server {
         proxy_set_header Connection "upgrade";
     }
 
-    # Static file caching
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         proxy_pass http://frontend;
         proxy_set_header Host $host;
         expires 30d;
         add_header Cache-Control "public, immutable";
+    }
+}
+
+# ─── Home / Landing (roboroca.com) ───
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    location / {
+        proxy_pass http://home;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        proxy_pass http://home;
+        proxy_set_header Host $host;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+# ─── Calculator (calc.roboroca.com) ───
+server {
+    listen 443 ssl;
+    server_name calc.${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    location / {
+        proxy_pass http://calculator;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# ─── Precision (precision.roboroca.com) ───
+server {
+    listen 443 ssl;
+    server_name precision.${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    location / {
+        proxy_pass http://precision;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# ─── Equipment (equipment.roboroca.com) ───
+server {
+    listen 443 ssl;
+    server_name equipment.${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    location / {
+        proxy_pass http://equipment;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# ─── Spectral (spectral.roboroca.com) ───
+server {
+    listen 443 ssl;
+    server_name spectral.${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
+    location / {
+        proxy_pass http://spectral;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }

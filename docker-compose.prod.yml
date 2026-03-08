@@ -30,6 +30,16 @@ services:
         condition: service_started
       backend:
         condition: service_started
+      home:
+        condition: service_started
+      calculator:
+        condition: service_started
+      precision:
+        condition: service_started
+      equipment:
+        condition: service_started
+      spectral:
+        condition: service_started
     restart: always
     networks:
       - roboroca-network
@@ -62,6 +72,116 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
     container_name: roboroca-frontend
+    environment:
+      - NODE_ENV=production
+    restart: always
+    networks:
+      - roboroca-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------
+  # Satellite: Home (roboroca.com)
+  # -----------------
+  home:
+    build:
+      context: ../roboroca-home
+      dockerfile: ../Roboroça/docker/Dockerfile.satellite
+      args:
+        APP_DIR: .
+        NEXT_PUBLIC_API_URL: https://api.${DOMAIN:-roboroca.com}/api/v1
+    container_name: roboroca-home
+    environment:
+      - NODE_ENV=production
+    restart: always
+    networks:
+      - roboroca-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------
+  # Satellite: Calculator (calc.roboroca.com)
+  # -----------------
+  calculator:
+    build:
+      context: ../roboroca-calculator
+      dockerfile: ../Roboroça/docker/Dockerfile.satellite
+      args:
+        APP_DIR: .
+        NEXT_PUBLIC_API_URL: https://api.${DOMAIN:-roboroca.com}/api/v1
+    container_name: roboroca-calculator
+    environment:
+      - NODE_ENV=production
+    restart: always
+    networks:
+      - roboroca-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------
+  # Satellite: Precision (precision.roboroca.com)
+  # -----------------
+  precision:
+    build:
+      context: ../roboroca-precision
+      dockerfile: ../Roboroça/docker/Dockerfile.satellite
+      args:
+        APP_DIR: .
+        NEXT_PUBLIC_API_URL: https://api.${DOMAIN:-roboroca.com}/api/v1
+    container_name: roboroca-precision
+    environment:
+      - NODE_ENV=production
+    restart: always
+    networks:
+      - roboroca-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------
+  # Satellite: Equipment (equipment.roboroca.com)
+  # -----------------
+  equipment:
+    build:
+      context: ../roboroca-equipment
+      dockerfile: ../Roboroça/docker/Dockerfile.satellite
+      args:
+        APP_DIR: .
+        NEXT_PUBLIC_API_URL: https://api.${DOMAIN:-roboroca.com}/api/v1
+    container_name: roboroca-equipment
+    environment:
+      - NODE_ENV=production
+    restart: always
+    networks:
+      - roboroca-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------
+  # Satellite: Spectral (spectral.roboroca.com)
+  # -----------------
+  spectral:
+    build:
+      context: ../roboroca-spectral
+      dockerfile: ../Roboroça/docker/Dockerfile.satellite
+      args:
+        APP_DIR: .
+        NEXT_PUBLIC_API_URL: https://api.${DOMAIN:-roboroca.com}/api/v1
+    container_name: roboroca-spectral
     environment:
       - NODE_ENV=production
     restart: always
