@@ -46,8 +46,8 @@
 |----|---------------------------------|-----------------------------------------------------|---------|
 | 1  | **SSL/TLS (HTTPS)**             | Configurar Certbot/Let's Encrypt no nginx           | 2h      |
 | 2  | **Backup automatizado do banco**| Cron job para pg_dump diario + upload S3/GDrive     | 2h      |
-| 3  | **CSRF protection**             | Middleware para proteger operacoes POST/PUT/DELETE   | 3h      |
-| 4  | **Token blacklist (logout)**    | Redis-backed: invalidar tokens ao fazer logout      | 3h      |
+| 3  | ~~CSRF protection~~             | **MITIGADO** por arquitetura (Bearer-only auth)     | —       |
+| 4  | ~~Token blacklist (logout)~~    | **IMPLEMENTADO** Redis JWT blacklist + fallback     | —       |
 
 ### PRIORIDADE MEDIA — Melhorias importantes
 
@@ -55,8 +55,8 @@
 |----|---------------------------------|-----------------------------------------------------|---------|
 | 5  | Monitoramento (Prometheus)      | Metricas de saude, latencia, erros em producao      | 4h      |
 | 6  | Email notifications (SMTP)      | Configurar servidor SMTP real (stub ja existe)      | 2h      |
-| 7  | Pydantic V2 migration           | 6 schemas usam `class Config` (deprecated warning)  | 1h      |
-| 8  | 1 imagem nao analisada (6/7)    | Video cria Image record que nao eh processado no ML | 1h      |
+| 7  | ~~Pydantic V2 migration~~       | **JA FEITO** (ConfigDict em uso)                    | —       |
+| 8  | ~~Video keyframe ML~~           | **JA FEITO** (`run_video_analysis()` chama ML)      | —       |
 
 ### PRIORIDADE BAIXA — Nice-to-have
 
@@ -71,16 +71,40 @@
 
 ---
 
+## SEGURANCA — CSRF (Mitigado por Arquitetura)
+
+A aplicacao utiliza **exclusivamente Bearer tokens** (header `Authorization: Bearer <jwt>`)
+e **API Keys** (header `X-API-Key: rbr_live_...`). Nenhum cookie de sessao e utilizado para
+autenticacao. Browsers nao enviam headers `Authorization` automaticamente em cross-origin
+requests, portanto **CSRF e mitigado por design** sem necessidade de tokens anti-CSRF.
+
+Referencia: [OWASP CSRF Prevention Cheat Sheet — Token-Based Mitigation](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)
+
+---
+
+## SEGURANCA — JWT Blacklist (Implementado)
+
+Logout invalida tokens via **Redis JWT blacklist** (chave `blacklisted_token:<jti>` com TTL
+igual ao tempo restante do token). Em ambientes sem Redis, utiliza **fallback in-memory**
+com set de JTIs. Implementado em `backend/core/security.py`.
+
+---
+
+## SEGURANCA — API Keys (Implementado)
+
+Chaves de API para acesso externo (M2M). Hash **SHA-256** armazenado no banco (nunca
+plaintext). Suporte a scopes, rate limits por chave, e expiracao. CRUD completo em
+`/api/v1/api-keys/`. Implementado em `backend/core/api_keys.py` e `backend/api/routes/api_keys.py`.
+
+---
+
 ## WARNINGS DOS TESTES (nao-bloqueantes)
 
-1. **PydanticDeprecatedSince20** (6 ocorrencias): Schemas usam `class Config` em vez de `ConfigDict`.
-   - Arquivos: `config.py`, `user.py`, `project.py`, `image.py`, `analysis.py`, `annotations.py`
-   - Impacto: Funciona, mas sera removido no Pydantic V3.
+1. ~~**PydanticDeprecatedSince20**~~: **Resolvido** — migrado para `ConfigDict`.
 
 2. **Passlib argon2 deprecation**: acesso a `argon2.__version__` deprecated. Funcional.
 
-3. **6/7 imagens analisadas**: O video original cria um Image record que nao passa pela pipeline ML.
-   Os 5 uploads + 1 keyframe foram analisados corretamente.
+3. ~~**6/7 imagens analisadas**~~: **Resolvido** — `run_video_analysis()` agora chama `run_image_full_analysis()` para cada keyframe.
 
 ---
 
