@@ -77,6 +77,22 @@ class Settings(BaseSettings):
     DO_SPACES_REGION: str = "nyc3"
     DO_SPACES_ENDPOINT: str = "https://nyc3.digitaloceanspaces.com"
 
+    # SMTP / Email
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "noreply@roboroca.com.br"
+    SMTP_FROM_NAME: str = "Roboroca"
+    SMTP_USE_TLS: bool = True
+
+    # Resend API (email async - alternativa ao SMTP)
+    RESEND_API_KEY: str = ""
+
+    # Sentinel Hub (NDVI via satélite)
+    SENTINEL_CLIENT_ID: str = ""
+    SENTINEL_CLIENT_SECRET: str = ""
+
     # Machine Learning
     ML_MODELS_DIR: str = "./ml_models"
     DEFAULT_SEGMENTATION_MODEL: str = "unet_landuse"

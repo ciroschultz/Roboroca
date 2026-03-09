@@ -550,11 +550,11 @@ export default function Home() {
                   </div>
                   <div className="flex gap-3">
                     <span className="w-6 h-6 rounded-full bg-[#6AAF3D] text-white flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                    <p>Clique em <strong className="text-[#6AAF3D]">"Processar e Gerar Relatório"</strong></p>
+                    <p>Clique em <strong className="text-[#6AAF3D]">&quot;Processar e Gerar Relat&oacute;rio&quot;</strong></p>
                   </div>
                   <div className="flex gap-3">
                     <span className="w-6 h-6 rounded-full bg-[#6AAF3D] text-white flex items-center justify-center text-xs font-bold shrink-0">4</span>
-                    <p>Um <strong className="text-white">novo projeto</strong> será criado automaticamente em "Meus Projetos"</p>
+                    <p>Um <strong className="text-white">novo projeto</strong> ser&aacute; criado automaticamente em &quot;Meus Projetos&quot;</p>
                   </div>
                 </div>
               </div>

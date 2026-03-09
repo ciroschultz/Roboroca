@@ -96,7 +96,7 @@ export default function MapView({ projectId }: MapViewProps) {
         ) : (
           /* ─── Project visualization ─── */
           <>
-            <div className="flex-1 relative bg-gray-900">
+            <div className="flex-1 relative bg-gray-900" aria-label="Mapa interativo do projeto">
               {/* View Mode Carousel */}
               <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30">
                 <ViewModeCarousel activeMode={state.activeViewMode} onModeChange={state.handleViewModeChange} />

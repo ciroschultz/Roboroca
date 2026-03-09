@@ -9,11 +9,13 @@ interface MobileMenuProps {
   children: React.ReactNode
 }
 
-export function MobileMenuButton({ onClick }: { onClick: () => void }) {
+export function MobileMenuButton({ onClick, isOpen }: { onClick: () => void; isOpen?: boolean }) {
   return (
     <button
       onClick={onClick}
       className="lg:hidden p-2 text-gray-400 hover:text-white hover:bg-gray-700/50 rounded-xl transition-colors"
+      aria-label="Abrir menu"
+      aria-expanded={isOpen ?? false}
     >
       <Menu size={24} />
     </button>
@@ -43,10 +45,13 @@ export function MobileMenuOverlay({ isOpen, onClose, children }: { isOpen: boole
           ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
         `}
         onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Menu deslizante */}
       <div
+        role="dialog"
+        aria-modal="true"
         className={`
           fixed top-0 left-0 h-full w-[280px] z-50 lg:hidden
           transform transition-transform duration-300 ease-out
@@ -57,6 +62,7 @@ export function MobileMenuOverlay({ isOpen, onClose, children }: { isOpen: boole
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white hover:bg-gray-700/50 rounded-lg transition-colors z-10"
+          aria-label="Fechar menu"
         >
           <X size={20} />
         </button>
@@ -70,7 +76,7 @@ export function MobileMenuOverlay({ isOpen, onClose, children }: { isOpen: boole
 export default function MobileMenu({ isOpen, onToggle, children }: MobileMenuProps) {
   return (
     <>
-      <MobileMenuButton onClick={onToggle} />
+      <MobileMenuButton onClick={onToggle} isOpen={isOpen} />
       <MobileMenuOverlay isOpen={isOpen} onClose={onToggle}>
         {children}
       </MobileMenuOverlay>

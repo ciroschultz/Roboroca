@@ -304,26 +304,34 @@ async def upload_image(
         logger.warning("Failed to extract metadata for %s: %s", file.filename, e)
 
     # Criar registro no banco
-    image = Image(
-        filename=unique_filename,
-        original_filename=file.filename,
-        file_path=file_path,
-        file_size=file_size,
-        mime_type=file.content_type,
-        image_type=image_type,
-        source=source or file_type,
-        width=width,
-        height=height,
-        center_lat=center_lat,
-        center_lon=center_lon,
-        capture_date=capture_date,
-        project_id=project_id,
-        status="uploaded"
-    )
+    try:
+        image = Image(
+            filename=unique_filename,
+            original_filename=file.filename,
+            file_path=file_path,
+            file_size=file_size,
+            mime_type=file.content_type,
+            image_type=image_type,
+            source=source or file_type,
+            width=width,
+            height=height,
+            center_lat=center_lat,
+            center_lon=center_lon,
+            capture_date=capture_date,
+            project_id=project_id,
+            status="uploaded"
+        )
 
-    db.add(image)
-    await db.commit()
-    await db.refresh(image)
+        db.add(image)
+        await db.commit()
+        await db.refresh(image)
+    except Exception:
+        # Limpar arquivos orfaos em caso de falha no DB
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+        raise
 
     # Atualizar coordenadas do projeto se for a primeira imagem com GPS
     if center_lat and center_lon and not project.latitude:

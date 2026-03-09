@@ -4,10 +4,12 @@ Ponto de entrada da API FastAPI.
 """
 
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core.logging_config import setup_logging
@@ -23,6 +25,10 @@ from backend.api.routes import health, images, projects, analysis, auth, annotat
 from backend.api.routes.api_keys import router as api_keys_router
 from backend.api.routes.websocket import router as ws_router
 from backend.modules.aerial.router import router as aerial_router
+from backend.modules.calculator.router import router as calculator_router
+from backend.modules.equipment.router import router as equipment_router
+from backend.modules.precision.router import router as precision_router
+from backend.modules.spectral.router import router as spectral_router
 from backend.core.config import settings
 from backend.core.database import init_db, close_db, async_session_maker
 
@@ -398,6 +404,10 @@ tags_metadata = [
     {"name": "API Keys", "description": "CRUD de chaves de API para acesso externo"},
     {"name": "Annotations", "description": "Anotacoes GIS, zonas de cultivo e export GeoJSON"},
     {"name": "WebSocket", "description": "Progresso em tempo real de analises via WebSocket"},
+    {"name": "Calculator", "description": "Calculadora Agraria — salvar e consultar calculos"},
+    {"name": "Equipment", "description": "Marketplace de equipamentos — produtos, carrinho, pedidos"},
+    {"name": "Precision", "description": "Agricultura de Precisao — talhoes, snapshots, zonas de manejo"},
+    {"name": "Spectral", "description": "Espectroscopia — amostras, analise lignina/celulose, calibracao"},
 ]
 
 app = FastAPI(
@@ -436,18 +446,50 @@ app.add_middleware(
 )
 
 
-# Middleware X-Request-ID
+# Middleware X-Request-ID + Metrics
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        from backend.services.metrics import metrics
+
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.request_id = request_id
-        logger.debug("request_id=%s %s %s", request_id, request.method, request.url.path)
+
+        start = time.time()
         response = await call_next(request)
+        duration = time.time() - start
+
         response.headers["X-Request-ID"] = request_id
+
+        # Metricas
+        method = request.method
+        path = request.url.path
+        status_code = response.status_code
+        metrics.inc("roboroca_http_requests_total", labels={"method": method, "status": str(status_code)})
+        metrics.observe("roboroca_http_request_duration_seconds", duration, labels={"method": method, "path": path})
+
+        if duration > 1.0:
+            logger.warning("Slow request: %s %s took %.2fs (status=%d)", method, path, duration, status_code)
+
         return response
 
 
 app.add_middleware(RequestIDMiddleware)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handler global para exceções não tratadas."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.error(
+        "Unhandled: %s %s [%s] %s",
+        request.method, request.url.path, request_id, exc,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erro interno do servidor"},
+    )
+
 
 # Registrar rotas
 app.include_router(health.router, prefix=settings.API_V1_PREFIX, tags=["Health"])
@@ -459,6 +501,10 @@ app.include_router(analysis.router, prefix=settings.API_V1_PREFIX, tags=["Analys
 app.include_router(api_keys_router, prefix=settings.API_V1_PREFIX, tags=["API Keys"])
 app.include_router(annotations.router, prefix=settings.API_V1_PREFIX, tags=["Annotations"])
 app.include_router(ws_router, tags=["WebSocket"])
+app.include_router(calculator_router, prefix=f"{settings.API_V1_PREFIX}/calculator", tags=["Calculator"])
+app.include_router(equipment_router, prefix=f"{settings.API_V1_PREFIX}/equipment", tags=["Equipment"])
+app.include_router(precision_router, prefix=f"{settings.API_V1_PREFIX}/precision", tags=["Precision"])
+app.include_router(spectral_router, prefix=f"{settings.API_V1_PREFIX}/spectral", tags=["Spectral"])
 
 
 @app.get("/")

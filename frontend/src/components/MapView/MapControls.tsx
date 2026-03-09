@@ -28,6 +28,7 @@ export default function MapControls({
           onClick={() => setZoom(prev => Math.min(prev + 10, 300))}
           className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
           title="Zoom in"
+          aria-label="Aumentar zoom"
         >
           <ZoomIn size={18} />
         </button>
@@ -38,6 +39,7 @@ export default function MapControls({
           onClick={() => setZoom(prev => Math.max(prev - 10, 25))}
           className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors"
           title="Zoom out"
+          aria-label="Diminuir zoom"
         >
           <ZoomOut size={18} />
         </button>
@@ -45,6 +47,7 @@ export default function MapControls({
           onClick={resetView}
           className="p-2 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg transition-colors ml-1"
           title="Resetar zoom e posicao"
+          aria-label="Resetar visualização"
         >
           <Maximize2 size={18} />
         </button>

@@ -54,6 +54,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('select')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'select' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
             title="Selecionar (S)"
+            aria-label="Selecionar"
+            aria-pressed={activeTool === 'select'}
           >
             <MousePointer size={16} />
           </button>
@@ -61,6 +63,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('point')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'point' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
             title="Marcador (P)"
+            aria-label="Marcador"
+            aria-pressed={activeTool === 'point'}
           >
             <MapPin size={16} />
           </button>
@@ -68,6 +72,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('polygon')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'polygon' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
             title="Poligono"
+            aria-label="Polígono"
+            aria-pressed={activeTool === 'polygon'}
           >
             <PenTool size={16} />
           </button>
@@ -75,6 +81,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('roi')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'roi' ? 'bg-blue-500 text-white' : 'text-blue-400 hover:text-white hover:bg-gray-700'}`}
             title="ROI"
+            aria-label="ROI"
+            aria-pressed={activeTool === 'roi'}
           >
             <Target size={16} />
           </button>
@@ -83,6 +91,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('zone')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'zone' ? 'bg-orange-500 text-white' : 'text-orange-400 hover:text-white hover:bg-gray-700'}`}
             title="Zona de cultivo"
+            aria-label="Zona de cultivo"
+            aria-pressed={activeTool === 'zone'}
           >
             <Hexagon size={16} />
           </button>
@@ -91,6 +101,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('measurement')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'measurement' ? 'bg-[#6AAF3D] text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
             title="Medir distancia"
+            aria-label="Medir distância"
+            aria-pressed={activeTool === 'measurement'}
           >
             <Ruler size={16} />
           </button>
@@ -98,6 +110,8 @@ export default function DrawingTools({
             onClick={() => setActiveTool('eraser')}
             className={`p-1.5 rounded transition-colors ${activeTool === 'eraser' ? 'bg-red-500 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
             title="Apagar"
+            aria-label="Apagar"
+            aria-pressed={activeTool === 'eraser'}
           >
             <Trash2 size={16} />
           </button>

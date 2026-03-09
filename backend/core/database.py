@@ -59,6 +59,10 @@ async def init_db():
     from backend.models.image import Image
     from backend.models.analysis import Analysis
     from backend.models.api_key import ApiKey
+    from backend.modules.calculator.models import Calculation
+    from backend.modules.equipment.models import Product, CartItem, Favorite, Order, OrderItem, OrderStatusHistory
+    from backend.modules.precision.models import Field, FieldSnapshot, ManagementZone, Prescription, ActivityLog
+    from backend.modules.spectral.models import SpectralSample, CalibrationPoint, LibrarySpectrum
 
     async with engine.begin() as conn:
         # Criar todas as tabelas
@@ -88,6 +92,17 @@ async def init_db():
             )
 
     logging.getLogger(__name__).info("Database tables created successfully")
+
+    # Seed equipment products
+    try:
+        from backend.modules.equipment.seed import seed_products
+        async with async_session_maker() as session:
+            count = await seed_products(session)
+            if count > 0:
+                await session.commit()
+                logging.getLogger(__name__).info("Seeded %d equipment products", count)
+    except Exception as e:
+        logging.getLogger(__name__).warning("Failed to seed products: %s", e)
 
 
 async def close_db():

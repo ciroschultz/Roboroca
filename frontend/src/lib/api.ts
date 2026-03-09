@@ -26,6 +26,17 @@ export function setAuthToken(token: string | null) {
  */
 export function loadAuthToken(): string | null {
   if (typeof window !== 'undefined') {
+    // Verificar se veio token pela URL (login compartilhado entre plataformas)
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlToken = urlParams.get('token')
+    if (urlToken) {
+      setAuthToken(urlToken)
+      // Limpar token da URL para não ficar visível
+      const url = new URL(window.location.href)
+      url.searchParams.delete('token')
+      window.history.replaceState({}, '', url.toString())
+      return authToken
+    }
     authToken = localStorage.getItem('roboroca_token')
   }
   return authToken
@@ -1321,6 +1332,250 @@ export async function getProjectAlerts(projectId: number): Promise<{
   summary: string
 }> {
   return apiRequest(`/projects/${projectId}/alerts`)
+}
+
+// ============================================
+// PRECISION AGRICULTURE
+// ============================================
+
+export interface PrecisionField {
+  id: number
+  name: string
+  area_ha?: number | null
+  crop?: string | null
+  status: string
+  geometry?: Record<string, unknown> | null
+  center_lat?: number | null
+  center_lon?: number | null
+  planting_date?: string | null
+  expected_harvest?: string | null
+  notes?: string | null
+  created_at: string
+  updated_at?: string | null
+}
+
+export interface FieldSnapshot {
+  id: number
+  field_id: number
+  snapshot_date: string
+  vegetation_index_mean?: number | null
+  vegetation_index_min?: number | null
+  vegetation_index_max?: number | null
+  weather_data?: Record<string, unknown> | null
+  soil_data?: Record<string, unknown> | null
+  satellite_image_path?: string | null
+  ndvi_source?: string | null
+}
+
+export interface PrecisionWeatherData {
+  current?: {
+    temperature_c: number
+    relative_humidity_pct: number
+    precipitation_mm: number
+    wind_speed_kmh: number
+    weather_description?: string
+  }
+  forecast_7d?: Array<{
+    date: string
+    temperature_max: number
+    temperature_min: number
+    precipitation_mm: number
+  }>
+  source?: string
+  error?: string
+}
+
+export interface PrecisionSoilData {
+  properties?: Record<string, {
+    label?: string
+    unit?: string
+    depths?: Record<string, number>
+  }>
+  interpretation?: Record<string, string> | string
+  source?: string
+  error?: string
+}
+
+export interface ClimateHistory {
+  source: string
+  coordinates?: { latitude: number; longitude: number }
+  period?: { start: string; end: string }
+  monthly_averages: Array<Record<string, unknown>>
+  period_stats?: Record<string, unknown>
+  parameters_description?: Record<string, unknown>
+  error?: string
+}
+
+export interface ManagementZone {
+  id: number
+  field_id: number
+  zone_type: string
+  geometry?: Record<string, unknown> | null
+  area_ha?: number | null
+  ndvi_range?: { min: number; max: number } | null
+  created_at: string
+}
+
+export interface Prescription {
+  id: number
+  field_id: number
+  type: string
+  product_name: string
+  rate_per_ha?: number | null
+  total_quantity?: number | null
+  status: string
+  zone_id?: number | null
+  applied_at?: string | null
+  created_at: string
+}
+
+export interface PrecisionDashboard {
+  total_fields: number
+  total_area_ha: number
+  total_prescriptions: number
+  recent_activities: Array<Record<string, unknown>>
+  fields_summary: Array<Record<string, unknown>>
+}
+
+/**
+ * Dashboard de agricultura de precisão
+ */
+export async function getPrecisionDashboard(): Promise<PrecisionDashboard> {
+  return apiRequest('/precision/dashboard/stats')
+}
+
+/**
+ * Listar talhões
+ */
+export async function getPrecisionFields(): Promise<{ items: PrecisionField[]; total: number }> {
+  return apiRequest('/precision/fields')
+}
+
+/**
+ * Criar talhão
+ */
+export async function createPrecisionField(data: {
+  name: string
+  area_ha?: number
+  crop?: string
+  center_lat?: number
+  center_lon?: number
+  planting_date?: string
+  expected_harvest?: string
+  notes?: string
+}): Promise<PrecisionField> {
+  return apiRequest('/precision/fields', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Obter talhão por ID
+ */
+export async function getPrecisionField(id: number): Promise<PrecisionField> {
+  return apiRequest(`/precision/fields/${id}`)
+}
+
+/**
+ * Atualizar talhão
+ */
+export async function updatePrecisionField(id: number, data: Partial<{
+  name: string
+  area_ha: number
+  crop: string
+  status: string
+  center_lat: number
+  center_lon: number
+  planting_date: string
+  expected_harvest: string
+  notes: string
+}>): Promise<PrecisionField> {
+  return apiRequest(`/precision/fields/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Deletar talhão
+ */
+export async function deletePrecisionField(id: number): Promise<void> {
+  return apiRequest(`/precision/fields/${id}`, { method: 'DELETE' })
+}
+
+/**
+ * Dados climáticos atuais do talhão
+ */
+export async function getFieldWeather(id: number): Promise<PrecisionWeatherData> {
+  return apiRequest(`/precision/fields/${id}/weather`)
+}
+
+/**
+ * Dados de solo do talhão
+ */
+export async function getFieldSoil(id: number): Promise<PrecisionSoilData> {
+  return apiRequest(`/precision/fields/${id}/soil`)
+}
+
+/**
+ * Capturar snapshot do talhão
+ */
+export async function captureFieldSnapshot(id: number): Promise<FieldSnapshot> {
+  return apiRequest(`/precision/fields/${id}/snapshot`, { method: 'POST' })
+}
+
+/**
+ * Listar snapshots do talhão
+ */
+export async function getFieldSnapshots(id: number): Promise<FieldSnapshot[]> {
+  return apiRequest(`/precision/fields/${id}/snapshots`)
+}
+
+/**
+ * Histórico climático do talhão (NASA POWER)
+ */
+export async function getFieldClimateHistory(id: number, months = 12): Promise<ClimateHistory> {
+  return apiRequest(`/precision/fields/${id}/climate-history?months=${months}`)
+}
+
+/**
+ * Gerar zonas de manejo
+ */
+export async function generateFieldZones(id: number): Promise<ManagementZone[]> {
+  return apiRequest(`/precision/fields/${id}/zones/generate`, { method: 'POST' })
+}
+
+/**
+ * Listar zonas de manejo
+ */
+export async function getFieldZones(id: number): Promise<ManagementZone[]> {
+  return apiRequest(`/precision/fields/${id}/zones`)
+}
+
+/**
+ * Listar prescrições
+ */
+export async function getPrescriptions(fieldId?: number): Promise<Prescription[]> {
+  const params = fieldId ? `?field_id=${fieldId}` : ''
+  return apiRequest(`/precision/prescriptions${params}`)
+}
+
+/**
+ * Criar prescrição
+ */
+export async function createPrescription(data: {
+  field_id: number
+  type: string
+  product_name: string
+  rate_per_ha?: number
+  total_quantity?: number
+  zone_id?: number
+}): Promise<Prescription> {
+  return apiRequest('/precision/prescriptions', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 }
 
 export { ApiError }

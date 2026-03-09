@@ -291,6 +291,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => setSourceType('drone')}
+            aria-pressed={sourceType === 'drone'}
             className={`p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-3
               ${sourceType === 'drone'
                 ? 'border-[#6AAF3D] bg-[#6AAF3D]/10'
@@ -312,6 +313,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
 
           <button
             onClick={() => setSourceType('satellite')}
+            aria-pressed={sourceType === 'satellite'}
             className={`p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-3
               ${sourceType === 'satellite'
                 ? 'border-[#6AAF3D] bg-[#6AAF3D]/10'
@@ -360,6 +362,10 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
+          aria-label="Zona de upload de arquivos"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('file-upload')?.click() } }}
           className={`drop-zone rounded-xl p-8 text-center transition-all duration-300
             ${isDragging ? 'active' : ''}
             ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}
@@ -463,7 +469,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
 
       {/* Erro global */}
       {uploadError && (
-        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2">
+        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2" aria-live="polite">
           <AlertCircle size={18} className="text-red-500" />
           <span className="text-red-400 text-sm">{uploadError}</span>
         </div>
@@ -481,6 +487,7 @@ export default function UploadZone({ onUploadComplete, onFilesUploaded }: Upload
           <button
             onClick={isAuthenticated ? handleUpload : handleDemoUpload}
             disabled={!canUpload}
+            aria-busy={isProcessing}
             className={`w-full py-3 font-semibold rounded-xl transition-colors flex items-center justify-center gap-2
               ${canUpload
                 ? 'bg-[#6AAF3D] hover:bg-[#5a9a34] text-white cursor-pointer'

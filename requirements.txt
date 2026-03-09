@@ -69,6 +69,16 @@ ultralytics>=8.0.0
 # eo-learn>=1.5.2      # Descomentar para pipeline EO
 
 # -----------------
+# Email (async)
+# -----------------
+# Resend API - alternativa async ao SMTP (usa httpx já incluído)
+
+# -----------------
+# Cache / Rate Limiting
+# -----------------
+redis[hiredis]>=5.0.0
+
+# -----------------
 # Utils
 # -----------------
 pydantic>=2.5.3

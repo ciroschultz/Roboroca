@@ -41,10 +41,10 @@ def _get_redis():
         _redis_available = True
         logger.info("Redis connected for JWT blacklist")
         return _redis_client
-    except Exception:
+    except (ImportError, ConnectionError, OSError) as e:
         _redis_client = object()  # Sentinel to avoid retrying
         _redis_available = False
-        logger.info("Redis not available, using in-memory JWT blacklist")
+        logger.info("Redis not available, using in-memory JWT blacklist: %s", e)
         return None
 
 
@@ -64,8 +64,8 @@ def blacklist_token(jti: str, exp: float) -> None:
             ttl = max(1, int(exp - time.time()))
             r.setex(f"bl:{jti}", ttl, "1")
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Redis blacklist set error: %s", e)
 
     # Fallback in-memory
     with _blacklist_lock:
@@ -79,8 +79,8 @@ def is_token_blacklisted(jti: str) -> bool:
     if r is not None:
         try:
             return r.exists(f"bl:{jti}") > 0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Redis blacklist check error: %s", e)
 
     # Fallback in-memory
     with _blacklist_lock:

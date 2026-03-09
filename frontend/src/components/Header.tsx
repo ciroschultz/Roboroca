@@ -154,6 +154,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
             <input
               type="text"
               placeholder="Pesquisar..."
+              aria-label="Pesquisar projetos"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setShowSearch(true)}
@@ -175,6 +176,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
           onClick={onThemeToggle}
           className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-gray-700/30 transition-all"
           title="Alternar tema"
+          aria-label={isDark ? 'Ativar tema claro' : 'Ativar tema escuro'}
         >
           {isDark ? <Sun size={20} /> : <Moon size={20} />}
         </button>
@@ -183,6 +185,9 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
           <button
             onClick={() => setShowNotifications(!showNotifications)}
             className="relative p-2 text-gray-400 hover:text-white rounded-xl hover:bg-gray-700/30 transition-all"
+            aria-label="Notificações"
+            aria-expanded={showNotifications}
+            aria-haspopup="menu"
           >
             <Bell size={20} />
             {unreadCount > 0 && (
@@ -194,7 +199,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
 
           {/* Dropdown de notificações */}
           {showNotifications && (
-            <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu">
+            <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu" role="menu">
               <div className="p-4 border-b border-gray-700/30 flex items-center justify-between">
                 <div>
                   <h3 className="text-white font-semibold">Notificações</h3>
@@ -227,6 +232,9 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
             className="flex items-center gap-1 p-1 rounded-xl hover:bg-gray-700/30 transition-all"
+            aria-label="Menu do usuário"
+            aria-expanded={showUserMenu}
+            aria-haspopup="menu"
           >
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#6AAF3D] to-[#1B3A5C] flex items-center justify-center">
               {currentUser ? (
@@ -238,7 +246,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
           </button>
 
           {showUserMenu && currentUser && (
-            <div className="absolute right-0 top-full mt-2 w-56 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu">
+            <div className="absolute right-0 top-full mt-2 w-56 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu" role="menu">
               <div className="p-3 border-b border-gray-700/30">
                 <p className="text-white font-medium text-sm">{currentUser.name}</p>
                 <p className="text-gray-500 text-xs truncate">{currentUser.email}</p>
@@ -247,12 +255,14 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
                 <button
                   onClick={() => handleNavClick('settings')}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700/30 rounded-lg"
+                  role="menuitem"
                 >
                   <Settings size={16} /> Configurações
                 </button>
                 <button
                   onClick={() => { setShowUserMenu(false); onLogout?.() }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/20 rounded-lg"
+                  role="menuitem"
                 >
                   <LogOut size={16} /> Sair
                 </button>
@@ -265,7 +275,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
   }
 
   return (
-    <header className="h-16 bg-gradient-to-r from-[#1a1a2e]/95 to-[#1a1a2e]/90 backdrop-blur-md border-b border-gray-700/30 flex items-center justify-between px-6 sticky top-0 z-40">
+    <header role="banner" className="h-16 bg-gradient-to-r from-[#1a1a2e]/95 to-[#1a1a2e]/90 backdrop-blur-md border-b border-gray-700/30 flex items-center justify-between px-6 sticky top-0 z-40">
       {/* Título da página */}
       <div className="animate-fade-in">
         <h1 className="text-xl font-bold text-white">{title}</h1>
@@ -287,6 +297,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
             <input
               type="text"
               placeholder="Pesquisar... (Ctrl+K)"
+              aria-label="Pesquisar projetos"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setShowSearch(true)}
@@ -352,6 +363,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
             onClick={onThemeToggle}
             className="relative p-2.5 text-gray-400 hover:text-white rounded-xl hover:bg-gray-700/30 transition-all duration-300 group"
             title="Alternar tema"
+            aria-label={isDark ? 'Ativar tema claro' : 'Ativar tema escuro'}
           >
             <div className="relative w-5 h-5">
               <Sun
@@ -373,6 +385,9 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
           <div className="relative" ref={notificationRef}>
             <button
               onClick={() => setShowNotifications(!showNotifications)}
+              aria-label="Notificações"
+              aria-expanded={showNotifications}
+              aria-haspopup="menu"
               className={`
                 relative p-2.5 rounded-xl transition-all duration-300
                 ${showNotifications
@@ -391,7 +406,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
 
             {/* Dropdown de notificações */}
             {showNotifications && (
-              <div className="absolute right-0 top-full mt-2 w-96 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu">
+              <div className="absolute right-0 top-full mt-2 w-96 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu" role="menu">
                 <div className="p-4 border-b border-gray-700/30 flex items-center justify-between">
                   <div>
                     <h3 className="text-white font-semibold">Notificações</h3>
@@ -476,6 +491,9 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
           <div className="relative" ref={userMenuRef}>
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
+              aria-label="Menu do usuário"
+              aria-expanded={showUserMenu}
+              aria-haspopup="menu"
               className={`
                 flex items-center gap-2 px-2 py-1.5 rounded-xl transition-all duration-300
                 ${showUserMenu
@@ -506,7 +524,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
 
             {/* Dropdown menu do usuário */}
             {showUserMenu && currentUser && (
-              <div className="absolute right-0 top-full mt-2 w-72 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu">
+              <div className="absolute right-0 top-full mt-2 w-72 bg-[#1a1a2e] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden z-50 dropdown-menu" role="menu">
                 {/* Header do menu */}
                 <div className="p-4 bg-gradient-to-br from-[#6AAF3D]/10 to-transparent border-b border-gray-700/30">
                   <div className="flex items-center gap-3">
@@ -527,6 +545,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
                   <button
                     onClick={() => handleNavClick('settings')}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                    role="menuitem"
                   >
                     <User size={18} />
                     <span>Meu Perfil</span>
@@ -534,6 +553,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
                   <button
                     onClick={() => handleNavClick('settings')}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                    role="menuitem"
                   >
                     <Settings size={18} />
                     <span>Configurações</span>
@@ -541,6 +561,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
                   <button
                     onClick={() => handleNavClick('reports')}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                    role="menuitem"
                   >
                     <FileText size={18} />
                     <span>Meus Relatórios</span>
@@ -548,6 +569,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
                   <button
                     onClick={() => handleNavClick('help')}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                    role="menuitem"
                   >
                     <HelpCircle size={18} />
                     <span>Ajuda e Suporte</span>
@@ -562,6 +584,7 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
                       onLogout?.()
                     }}
                     className="w-full flex items-center gap-3 px-3 py-2.5 text-red-400 hover:bg-red-900/20 rounded-lg transition-colors"
+                    role="menuitem"
                   >
                     <LogOut size={18} />
                     <span>Sair da conta</span>

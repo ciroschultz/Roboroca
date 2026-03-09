@@ -97,10 +97,15 @@ export default function ConfirmDialog({
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={handleClose}
+        aria-hidden="true"
       />
 
       {/* Modal */}
       <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-message"
         className={`
           relative bg-[#1a1a2e] border ${config.borderColor} rounded-2xl shadow-2xl
           max-w-md w-full transform transition-all duration-200
@@ -112,24 +117,25 @@ export default function ConfirmDialog({
           onClick={handleClose}
           className="absolute top-4 right-4 p-1 text-gray-500 hover:text-white transition-colors rounded-lg hover:bg-gray-700/50"
           disabled={isLoading}
+          aria-label="Fechar"
         >
-          <X size={20} />
+          <X size={20} aria-hidden="true" />
         </button>
 
         {/* Content */}
         <div className="p-6">
           {/* Icon */}
           <div className={`w-14 h-14 ${config.iconBg} rounded-full flex items-center justify-center mx-auto mb-4`}>
-            <Icon className={config.iconColor} size={28} />
+            <Icon className={config.iconColor} size={28} aria-hidden="true" />
           </div>
 
           {/* Title */}
-          <h3 className="text-xl font-semibold text-white text-center mb-2">
+          <h3 id="confirm-dialog-title" className="text-xl font-semibold text-white text-center mb-2">
             {title}
           </h3>
 
           {/* Message */}
-          <p className="text-gray-400 text-center mb-6">
+          <p id="confirm-dialog-message" className="text-gray-400 text-center mb-6">
             {message}
           </p>
 
@@ -146,6 +152,7 @@ export default function ConfirmDialog({
               onClick={handleConfirm}
               disabled={isLoading}
               className={`flex-1 py-3 px-4 ${config.buttonBg} text-white font-medium rounded-xl transition-all btn-press disabled:opacity-50 flex items-center justify-center gap-2`}
+              aria-busy={isLoading}
             >
               {isLoading ? (
                 <>

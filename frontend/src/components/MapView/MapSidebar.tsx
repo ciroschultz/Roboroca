@@ -94,13 +94,13 @@ export default function MapSidebar({
                     <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">{summary}</span>
                   )}
                 </div>
-                <button onClick={() => toggleLayer(layer.id)} className="p-1 hover:bg-gray-700 rounded transition-colors shrink-0">
+                <button onClick={() => toggleLayer(layer.id)} className="p-1 hover:bg-gray-700 rounded transition-colors shrink-0" aria-pressed={layer.visible} aria-label={`Visibilidade: ${layer.name}`}>
                   {layer.visible ? <Eye size={16} className="text-[#6AAF3D]" /> : <EyeOff size={16} className="text-gray-500" />}
                 </button>
               </div>
               {layer.visible && (
                 <div className="flex items-center gap-2 mt-2">
-                  <input type="range" min="0" max="100" value={layer.opacity} onChange={(e) => updateOpacity(layer.id, parseInt(e.target.value))} className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer" />
+                  <input type="range" min="0" max="100" value={layer.opacity} onChange={(e) => updateOpacity(layer.id, parseInt(e.target.value))} className="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer" aria-label={`Opacidade: ${layer.name}`} />
                   <span className="text-xs text-gray-400 w-8">{layer.opacity}%</span>
                 </div>
               )}

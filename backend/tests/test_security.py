@@ -37,60 +37,65 @@ def make_request(ip: str = "127.0.0.1", forwarded: str = None) -> MagicMock:
 # ============================================================
 
 
-def test_rate_limiter_allows_requests_within_limit():
+@pytest.mark.asyncio
+async def test_rate_limiter_allows_requests_within_limit():
     """Requests up to max_requests must pass without raising."""
     limiter = RateLimiter(max_requests=3, window_seconds=60)
     request = make_request("10.0.0.1")
 
     for _ in range(3):
-        limiter.check(request)  # must not raise
+        await limiter.check(request)  # must not raise
 
 
-def test_rate_limiter_blocks_on_exceeded_limit():
+@pytest.mark.asyncio
+async def test_rate_limiter_blocks_on_exceeded_limit():
     """The (max_requests + 1)-th request within the window must raise 429."""
     limiter = RateLimiter(max_requests=3, window_seconds=60)
     request = make_request("10.0.0.2")
 
     for _ in range(3):
-        limiter.check(request)
+        await limiter.check(request)
 
     with pytest.raises(HTTPException) as exc_info:
-        limiter.check(request)
+        await limiter.check(request)
 
     assert exc_info.value.status_code == 429
 
 
-def test_rate_limiter_429_includes_retry_after():
+@pytest.mark.asyncio
+async def test_rate_limiter_429_includes_retry_after():
     """The 429 response must include a Retry-After header."""
     limiter = RateLimiter(max_requests=1, window_seconds=30)
     request = make_request("10.0.0.3")
 
-    limiter.check(request)  # first request: allowed
+    await limiter.check(request)  # first request: allowed
 
     with pytest.raises(HTTPException) as exc_info:
-        limiter.check(request)  # second: blocked
+        await limiter.check(request)  # second: blocked
 
     assert "Retry-After" in exc_info.value.headers
     assert exc_info.value.headers["Retry-After"] == "30"
 
 
-def test_rate_limiter_different_ips_are_independent():
+@pytest.mark.asyncio
+async def test_rate_limiter_different_ips_are_independent():
     """Each IP has its own counter — one IP's exhaustion must not affect others."""
     limiter = RateLimiter(max_requests=2, window_seconds=60)
     req_a = make_request("192.168.1.1")
     req_b = make_request("192.168.1.2")
 
     # Exhaust IP A
-    limiter.check(req_a)
-    limiter.check(req_a)
+    await limiter.check(req_a)
+    await limiter.check(req_a)
     with pytest.raises(HTTPException):
-        limiter.check(req_a)
+        await limiter.check(req_a)
 
     # IP B should still be allowed
-    limiter.check(req_b)  # must not raise
+    await limiter.check(req_b)  # must not raise
 
 
-def test_rate_limiter_uses_x_forwarded_for():
+@pytest.mark.asyncio
+async def test_rate_limiter_uses_x_forwarded_for():
     """When X-Forwarded-For is present it is used as the client IP."""
     limiter = RateLimiter(max_requests=1, window_seconds=60)
 
@@ -98,21 +103,22 @@ def test_rate_limiter_uses_x_forwarded_for():
     req1 = make_request(ip="1.2.3.4", forwarded="5.6.7.8")
     req2 = make_request(ip="9.9.9.9", forwarded="5.6.7.8")
 
-    limiter.check(req1)  # allowed — first request for 5.6.7.8
+    await limiter.check(req1)  # allowed — first request for 5.6.7.8
 
     # Should be blocked because forwarded IP is the same
     with pytest.raises(HTTPException):
-        limiter.check(req2)
+        await limiter.check(req2)
 
 
-def test_rate_limiter_no_client_falls_back_to_unknown():
+@pytest.mark.asyncio
+async def test_rate_limiter_no_client_falls_back_to_unknown():
     """If request.client is None the limiter uses 'unknown' as the key."""
     limiter = RateLimiter(max_requests=2, window_seconds=60)
     request = MagicMock()
     request.client = None
     request.headers = {}
 
-    limiter.check(request)
+    await limiter.check(request)
     limiter.check(request)
 
     with pytest.raises(HTTPException) as exc_info:

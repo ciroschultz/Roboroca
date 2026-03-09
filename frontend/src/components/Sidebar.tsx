@@ -136,7 +136,7 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
       </div>
 
       {/* Menu */}
-      <nav className="flex-1 py-4 overflow-y-auto scrollbar-thin">
+      <nav className="flex-1 py-4 overflow-y-auto scrollbar-thin" role="navigation" aria-label="Menu principal">
         <ul className="space-y-1 px-3">
           {menuItems.map((item, index) => (
             <li
@@ -154,6 +154,8 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
                 }}
                 onMouseEnter={() => setHoveredItem(item.id)}
                 onMouseLeave={() => setHoveredItem(null)}
+                aria-current={activeItem === item.id ? 'page' : undefined}
+                aria-expanded={item.submenu ? expandedMenus.includes(item.id) : undefined}
                 className={`
                   relative w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-300
                   ${activeItem === item.id
@@ -169,12 +171,13 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
                       absolute inset-0 rounded-xl bg-gray-700/30 transition-opacity duration-300
                       ${hoveredItem === item.id ? 'opacity-100' : 'opacity-0'}
                     `}
+                    aria-hidden="true"
                   />
                 )}
 
                 {/* Active indicator */}
                 {activeItem === item.id && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-r-full shadow-lg shadow-white/50" />
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-r-full shadow-lg shadow-white/50" aria-hidden="true" />
                 )}
 
                 <div className="relative flex items-center gap-3">
@@ -192,6 +195,7 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
                 {item.submenu && (
                   <ChevronDown
                     size={18}
+                    aria-hidden="true"
                     className={`relative transition-transform duration-300 ${
                       expandedMenus.includes(item.id) ? 'rotate-180' : ''
                     }`}
@@ -219,6 +223,7 @@ export default function Sidebar({ activeItem, onItemClick, currentUser, onLogout
                       >
                         <button
                           onClick={() => onItemClick(subitem.id)}
+                          aria-current={activeItem === subitem.id ? 'page' : undefined}
                           className={`
                             group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200
                             ${activeItem === subitem.id

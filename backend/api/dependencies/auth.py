@@ -38,6 +38,13 @@ async def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="API key invalida ou expirada",
             )
+        # Verificar se rate limit foi excedido
+        if getattr(api_key_obj, '_rate_limited', False):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit excedido para esta API key",
+                headers={"Retry-After": "60"},
+            )
         result = await db.execute(select(User).where(User.id == api_key_obj.user_id))
         user = result.scalar_one_or_none()
         if user is None or not user.is_active:

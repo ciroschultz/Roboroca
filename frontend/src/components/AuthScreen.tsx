@@ -129,7 +129,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0f0f1a] via-[#1a1a2e] to-[#0f2027] flex items-center justify-center p-4">
       {/* Background decorativo */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
         <div className="absolute top-20 left-10 w-72 h-72 bg-[#6AAF3D]/10 rounded-full blur-3xl" />
         <div className="absolute bottom-20 right-10 w-96 h-96 bg-[#1B3A5C]/20 rounded-full blur-3xl" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-r from-[#6AAF3D]/5 to-[#1B3A5C]/5 rounded-full blur-3xl" />
@@ -156,8 +156,12 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
         {/* Card principal */}
         <div className="bg-[#1a1a2e]/80 backdrop-blur-xl border border-gray-700/50 rounded-2xl shadow-2xl overflow-hidden">
           {/* Tabs */}
-          <div className="flex border-b border-gray-700/50">
+          <div className="flex border-b border-gray-700/50" role="tablist">
             <button
+              id="login-tab"
+              role="tab"
+              aria-selected={activeTab === 'login'}
+              aria-controls="login-panel"
               onClick={() => switchTab('login')}
               className={`flex-1 py-4 text-center font-medium transition-all duration-300 ${
                 activeTab === 'login'
@@ -168,6 +172,10 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               Entrar
             </button>
             <button
+              id="register-tab"
+              role="tab"
+              aria-selected={activeTab === 'register'}
+              aria-controls="register-panel"
               onClick={() => switchTab('register')}
               className={`flex-1 py-4 text-center font-medium transition-all duration-300 ${
                 activeTab === 'register'
@@ -180,14 +188,22 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
           </div>
 
           {/* Formulário */}
-          <form onSubmit={activeTab === 'login' ? handleLogin : handleRegister} className="p-6 space-y-4">
+          <form
+            onSubmit={activeTab === 'login' ? handleLogin : handleRegister}
+            className="p-6 space-y-4"
+            role="tabpanel"
+            id={activeTab === 'login' ? 'login-panel' : 'register-panel'}
+            aria-labelledby={activeTab === 'login' ? 'login-tab' : 'register-tab'}
+          >
             {/* Mensagem de erro */}
-            {error && (
-              <div className="flex items-center gap-3 p-4 bg-red-900/20 border border-red-700/50 rounded-lg text-red-400 text-sm animate-in fade-in slide-in-from-top-2 duration-300">
-                <AlertCircle size={18} className="shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            <div aria-live="polite">
+              {error && (
+                <div className="flex items-center gap-3 p-4 bg-red-900/20 border border-red-700/50 rounded-lg text-red-400 text-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                  <AlertCircle size={18} className="shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
 
             {/* Campo Nome (apenas cadastro) */}
             {activeTab === 'register' && (
@@ -200,6 +216,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Seu nome completo"
+                    aria-required="true"
                     className="w-full pl-11 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] focus:ring-1 focus:ring-[#6AAF3D]/50 transition-all"
                     disabled={isLoading}
                   />
@@ -217,6 +234,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="seu@email.com"
+                  aria-required="true"
                   className="w-full pl-11 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] focus:ring-1 focus:ring-[#6AAF3D]/50 transition-all"
                   disabled={isLoading}
                 />
@@ -233,12 +251,14 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
+                  aria-required="true"
                   className="w-full pl-11 pr-12 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] focus:ring-1 focus:ring-[#6AAF3D]/50 transition-all"
                   disabled={isLoading}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
                 >
                   {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
@@ -257,12 +277,14 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
+                    aria-required="true"
                     className="w-full pl-11 pr-12 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#6AAF3D] focus:ring-1 focus:ring-[#6AAF3D]/50 transition-all"
                     disabled={isLoading}
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Ocultar senha' : 'Mostrar senha'}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
                   >
                     {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
@@ -275,6 +297,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
             <button
               type="submit"
               disabled={isLoading}
+              aria-busy={isLoading}
               className="w-full py-3 bg-gradient-to-r from-[#6AAF3D] to-[#5a9a34] hover:from-[#5a9a34] hover:to-[#4a8a2a] text-white font-semibold rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-[#6AAF3D]/20 hover:shadow-[#6AAF3D]/30"
             >
               {isLoading ? (

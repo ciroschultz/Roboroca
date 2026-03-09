@@ -28,6 +28,7 @@ from backend.api.schemas.user import (
     PasswordResetConfirm,
 )
 from backend.api.dependencies.auth import get_current_user, oauth2_scheme
+from backend.services.email import send_password_reset_email, send_welcome_email
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ async def register(
     db: AsyncSession = Depends(get_db)
 ):
     """Registrar novo usuário."""
-    auth_rate_limiter.check(request)
+    await auth_rate_limiter.check(request)
     # Verificar se email já existe
     result = await db.execute(select(User).where(User.email == user_data.email))
     if result.scalar_one_or_none():
@@ -70,6 +71,12 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
+    # Send welcome email (non-blocking, best-effort)
+    try:
+        await send_welcome_email(user.email, user.username)
+    except Exception as e:
+        logger.warning("Failed to send welcome email: %s", e)
+
     return user
 
 
@@ -84,7 +91,7 @@ async def login(
 
     Use o email como username no formulário.
     """
-    login_rate_limiter.check(request)
+    await login_rate_limiter.check(request)
     # Buscar usuário por email
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
@@ -165,9 +172,10 @@ async def update_preferences(
 async def change_password(
     data: PasswordChange,
     current_user: User = Depends(get_current_user),
+    token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ):
-    """Alterar senha do usuário autenticado."""
+    """Alterar senha do usuário autenticado. Invalida o token atual."""
     if not verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -177,7 +185,13 @@ async def change_password(
     current_user.hashed_password = get_password_hash(data.new_password)
     await db.commit()
 
-    return {"message": "Senha alterada com sucesso"}
+    # Invalidar token atual para forçar novo login
+    if token:
+        payload = decode_access_token(token)
+        if payload and payload.get("jti"):
+            blacklist_token(payload["jti"], payload.get("exp", 0))
+
+    return {"message": "Senha alterada com sucesso. Faca login novamente."}
 
 
 @router.post("/password/reset-request")
@@ -187,7 +201,7 @@ async def request_password_reset(
     db: AsyncSession = Depends(get_db)
 ):
     """Solicitar reset de senha. Gera token e loga URL no console."""
-    login_rate_limiter.check(request)
+    await login_rate_limiter.check(request)
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -201,9 +215,11 @@ async def request_password_reset(
     user.reset_token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
     await db.commit()
 
-    # Log reset URL to console (no email service)
-    reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
-    logger.warning("PASSWORD RESET URL for %s: %s", user.email, reset_url)
+    # Send email or log to console
+    sent = await send_password_reset_email(user.email, token)
+    if not sent:
+        reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+        logger.warning("SMTP not configured — PASSWORD RESET URL for %s: %s", user.email, reset_url)
 
     return {"message": "Se o email estiver cadastrado, você receberá instruções para redefinir sua senha."}
 

@@ -207,12 +207,40 @@ services:
       - ENVIRONMENT=production
       - FRONTEND_URL=${FRONTEND_URL:-https://localhost}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - REDIS_URL=redis://redis:6379/0
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-noreply@roboroca.com.br}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Roboroca}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
     volumes:
       - uploads_data:/app/uploads
       - ml_models_data:/app/ml_models
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    networks:
+      - roboroca-network
+
+  # -----------------
+  # Redis (JWT blacklist, cache, rate limiting)
+  # -----------------
+  redis:
+    image: redis:7-alpine
+    container_name: roboroca-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     restart: always
     networks:
       - roboroca-network
@@ -246,6 +274,7 @@ volumes:
   ml_models_data:
   certbot_www:
   certbot_certs:
+  redis_data:
 
 networks:
   roboroca-network:

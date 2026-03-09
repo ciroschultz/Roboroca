@@ -218,7 +218,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mt-4">
+        <div className="flex gap-1 mt-4" role="tablist" aria-label="Seções do projeto">
           {[
             { id: 'overview', label: 'Visao Geral', icon: <BarChart3 size={16} /> },
             { id: 'analysis', label: 'Analise ML', icon: <Cpu size={16} /> },
@@ -228,6 +228,8 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
+              role="tab"
+              aria-selected={activeTab === tab.id}
               className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors ${
                 activeTab === tab.id
                   ? 'bg-[#0f0f1a] text-white'
@@ -242,7 +244,7 @@ export default function ProjectProfile({ project, onBack, onRefresh, initialTab,
       </div>
 
       {/* Conteudo */}
-      <div className="p-6">
+      <div className="p-6" role="tabpanel">
         {activeTab === 'map' ? (
           <MapTab projectId={Number(project.id)} />
         ) : project.status === 'processing' || data.analysisProgress ? (
