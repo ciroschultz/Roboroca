@@ -75,7 +75,32 @@
       "Bash(npx next:*)",
       "Bash(npx:*)",
       "Bash(# Find all python/uvicorn processes wmic process where \"\"name=''python.exe''\"\" get ProcessId,CommandLine)",
-      "Bash(PYTHONIOENCODING=utf-8 python:*)"
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(wc:*)",
+      "Bash(/tmp/check_icons.txt:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(npm install:*)",
+      "Bash(node:*)",
+      "Bash(git log:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(gh repo:*)",
+      "Bash(do echo \"=== $dir ===\")",
+      "Read(//c/Users/Ciro/$dir/**)",
+      "Bash(Roboroça \")",
+      "Bash(do curl:*)",
+      "Bash(sed:*)",
+      "Bash(do echo \"=== $d ===\")",
+      "Read(//c/Users/Ciro/$d/**)",
+      "Bash(do echo \"=== $d port ===\")",
+      "Bash(do echo:*)",
+      "Bash(POSTGRES_PASSWORD=test docker compose:*)",
+      "Bash(npm list:*)",
+      "Bash(echo $d: SEPARATE GIT REPO:*)",
+      "Bash(/tmp/frontend_check.txt:*)",
+      "Read(//tmp/**)",
+      "Read(//c/Users/Ciro/roboroca-home/**)",
+      "Read(//c/Users/Ciro//**)"
     ]
   }
 }

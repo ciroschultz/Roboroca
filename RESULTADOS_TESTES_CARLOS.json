@@ -1,0 +1,431 @@
+{
+  "date": "2026-03-08T22:09:43.539852",
+  "user": "carlos",
+  "total": 70,
+  "passed": 70,
+  "failed": 0,
+  "rate": 100.0,
+  "results": [
+    {
+      "name": "GET /health",
+      "status": "PASS",
+      "detail": "status=healthy",
+      "category": "Health"
+    },
+    {
+      "name": "GET /health/ready",
+      "status": "PASS",
+      "detail": "db=connected",
+      "category": "Health"
+    },
+    {
+      "name": "GET /metrics",
+      "status": "PASS",
+      "detail": "1861 bytes",
+      "category": "Health"
+    },
+    {
+      "name": "Registro carlos",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Auth"
+    },
+    {
+      "name": "Login carlos",
+      "status": "PASS",
+      "detail": "token=eyJhbGciOiJIUzI1NiIs...",
+      "category": "Auth"
+    },
+    {
+      "name": "GET /auth/me",
+      "status": "PASS",
+      "detail": "email=carlos@gmail.com, username=carlos",
+      "category": "Auth"
+    },
+    {
+      "name": "PUT /auth/me (update name)",
+      "status": "PASS",
+      "detail": "name=Carlos Silva Auditor",
+      "category": "Auth"
+    },
+    {
+      "name": "PUT /auth/preferences",
+      "status": "PASS",
+      "detail": "lang=pt-BR, theme=dark",
+      "category": "Auth"
+    },
+    {
+      "name": "Trocar senha (123123->456456)",
+      "status": "PASS",
+      "detail": "Senha alterada com sucesso",
+      "category": "Auth"
+    },
+    {
+      "name": "Login com nova senha",
+      "status": "PASS",
+      "detail": "OK",
+      "category": "Auth"
+    },
+    {
+      "name": "Restaurar senha original",
+      "status": "PASS",
+      "detail": "",
+      "category": "Auth"
+    },
+    {
+      "name": "POST password/reset-request",
+      "status": "PASS",
+      "detail": "Se o email estiver cadastrado, você receberá instruções para",
+      "category": "Auth"
+    },
+    {
+      "name": "Registro email duplicado -> 400",
+      "status": "PASS",
+      "detail": "got 400",
+      "category": "Auth Edge"
+    },
+    {
+      "name": "Registro username duplicado -> 400",
+      "status": "PASS",
+      "detail": "got 400",
+      "category": "Auth Edge"
+    },
+    {
+      "name": "Registro email invalido -> 422",
+      "status": "PASS",
+      "detail": "got 422",
+      "category": "Auth Edge"
+    },
+    {
+      "name": "Registro senha curta -> 422",
+      "status": "PASS",
+      "detail": "got 422",
+      "category": "Auth Edge"
+    },
+    {
+      "name": "Login senha errada -> 401",
+      "status": "PASS",
+      "detail": "got 401",
+      "category": "Auth Edge"
+    },
+    {
+      "name": "GET /auth/me sem token -> 401",
+      "status": "PASS",
+      "detail": "got 401",
+      "category": "Auth Edge"
+    },
+    {
+      "name": "Criar projeto",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Projetos"
+    },
+    {
+      "name": "Listar projetos",
+      "status": "PASS",
+      "detail": "1 projetos",
+      "category": "Projetos"
+    },
+    {
+      "name": "GET projeto por ID",
+      "status": "PASS",
+      "detail": "name=Fazenda Auditoria 1773018438",
+      "category": "Projetos"
+    },
+    {
+      "name": "PUT atualizar projeto",
+      "status": "PASS",
+      "detail": "descricao atualizada",
+      "category": "Projetos"
+    },
+    {
+      "name": "GET /projects/stats",
+      "status": "PASS",
+      "detail": "{\"total_projects\": 1, \"total_images\": 0, \"total_analyses\": 0, \"total_area_ha\": 0",
+      "category": "Projetos"
+    },
+    {
+      "name": "GET /projects/{id}/timeline",
+      "status": "PASS",
+      "detail": "0 entries",
+      "category": "Projetos"
+    },
+    {
+      "name": "GET projeto inexistente -> 404",
+      "status": "PASS",
+      "detail": "got 404",
+      "category": "Projetos"
+    },
+    {
+      "name": "GET projetos sem token -> 401",
+      "status": "PASS",
+      "detail": "got 401",
+      "category": "Projetos"
+    },
+    {
+      "name": "Criar API Key",
+      "status": "PASS",
+      "detail": "id=1, key=rbr_live_90iU6J...",
+      "category": "API Keys"
+    },
+    {
+      "name": "Listar API Keys",
+      "status": "PASS",
+      "detail": "1 keys",
+      "category": "API Keys"
+    },
+    {
+      "name": "Auth via X-API-Key header",
+      "status": "PASS",
+      "detail": "email=carlos@gmail.com",
+      "category": "API Keys"
+    },
+    {
+      "name": "Deletar API Key",
+      "status": "PASS",
+      "detail": "status=204",
+      "category": "API Keys"
+    },
+    {
+      "name": "Criar calculo",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Calculator"
+    },
+    {
+      "name": "Listar calculos",
+      "status": "PASS",
+      "detail": "count=1",
+      "category": "Calculator"
+    },
+    {
+      "name": "GET calculo por ID",
+      "status": "PASS",
+      "detail": "title=Calculo Area Fazenda",
+      "category": "Calculator"
+    },
+    {
+      "name": "GET /calculator/stats",
+      "status": "PASS",
+      "detail": "{\"total\": 1, \"by_type\": [{\"name\": \"area\", \"value\": 1, \"color\": \"#9CA3AF\"}], \"mon",
+      "category": "Calculator"
+    },
+    {
+      "name": "Deletar calculo",
+      "status": "PASS",
+      "detail": "status=204",
+      "category": "Calculator"
+    },
+    {
+      "name": "Listar produtos (publico)",
+      "status": "PASS",
+      "detail": "18 produtos",
+      "category": "Equipment"
+    },
+    {
+      "name": "Filtrar produtos por categoria",
+      "status": "PASS",
+      "detail": "status=200",
+      "category": "Equipment"
+    },
+    {
+      "name": "Buscar produtos (search=sensor)",
+      "status": "PASS",
+      "detail": "status=200",
+      "category": "Equipment"
+    },
+    {
+      "name": "GET produto por ID",
+      "status": "PASS",
+      "detail": "name=Arado Reversível 3 Discos",
+      "category": "Equipment"
+    },
+    {
+      "name": "Adicionar ao carrinho",
+      "status": "PASS",
+      "detail": "item_id=1",
+      "category": "Equipment"
+    },
+    {
+      "name": "GET carrinho",
+      "status": "PASS",
+      "detail": "items=1",
+      "category": "Equipment"
+    },
+    {
+      "name": "Toggle favorito",
+      "status": "PASS",
+      "detail": "status=201",
+      "category": "Equipment"
+    },
+    {
+      "name": "Listar favoritos",
+      "status": "PASS",
+      "detail": "count=1",
+      "category": "Equipment"
+    },
+    {
+      "name": "GET /precision/dashboard/stats",
+      "status": "PASS",
+      "detail": "{\"total_fields\": 0, \"total_area_ha\": 0.0, \"total_prescriptions\": 0, \"recent_acti",
+      "category": "Precision"
+    },
+    {
+      "name": "Criar talhao (field)",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Precision"
+    },
+    {
+      "name": "Listar talhoes",
+      "status": "PASS",
+      "detail": "count=?",
+      "category": "Precision"
+    },
+    {
+      "name": "GET talhao por ID",
+      "status": "PASS",
+      "detail": "name=Talhao Norte",
+      "category": "Precision"
+    },
+    {
+      "name": "PUT atualizar talhao",
+      "status": "PASS",
+      "detail": "name=Talhao Norte Atualizado",
+      "category": "Precision"
+    },
+    {
+      "name": "Capturar snapshot",
+      "status": "PASS",
+      "detail": "status=200",
+      "category": "Precision"
+    },
+    {
+      "name": "Criar prescricao",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Precision"
+    },
+    {
+      "name": "Listar prescricoes",
+      "status": "PASS",
+      "detail": "count=1",
+      "category": "Precision"
+    },
+    {
+      "name": "Deletar talhao",
+      "status": "PASS",
+      "detail": "status=204",
+      "category": "Precision"
+    },
+    {
+      "name": "GET /spectral/dashboard/stats",
+      "status": "PASS",
+      "detail": "{\"total_samples\": 0, \"analyzed_count\": 0, \"pending_count\": 0, \"species_distribut",
+      "category": "Spectral"
+    },
+    {
+      "name": "Criar amostra espectral",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Spectral"
+    },
+    {
+      "name": "Listar amostras",
+      "status": "PASS",
+      "detail": "count=1",
+      "category": "Spectral"
+    },
+    {
+      "name": "GET amostra por ID",
+      "status": "PASS",
+      "detail": "name=None",
+      "category": "Spectral"
+    },
+    {
+      "name": "PUT atualizar amostra",
+      "status": "PASS",
+      "detail": "descricao atualizada",
+      "category": "Spectral"
+    },
+    {
+      "name": "GET /spectral/library",
+      "status": "PASS",
+      "detail": "count=0",
+      "category": "Spectral"
+    },
+    {
+      "name": "Adicionar a biblioteca",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Spectral"
+    },
+    {
+      "name": "GET /spectral/calibration",
+      "status": "PASS",
+      "detail": "count=0",
+      "category": "Spectral"
+    },
+    {
+      "name": "Adicionar ponto calibracao",
+      "status": "PASS",
+      "detail": "id=1",
+      "category": "Spectral"
+    },
+    {
+      "name": "Deletar amostra espectral",
+      "status": "PASS",
+      "detail": "status=204",
+      "category": "Spectral"
+    },
+    {
+      "name": "GET /images/",
+      "status": "PASS",
+      "detail": "count=0",
+      "category": "Images"
+    },
+    {
+      "name": "GET /images/capture/providers",
+      "status": "PASS",
+      "detail": "1 providers",
+      "category": "Images"
+    },
+    {
+      "name": "GET /images/clusters/by-project",
+      "status": "PASS",
+      "detail": "clusters=?",
+      "category": "Images"
+    },
+    {
+      "name": "GET /annotations/ (image inexistente)",
+      "status": "PASS",
+      "detail": "got 404",
+      "category": "Annotations"
+    },
+    {
+      "name": "Export GeoJSON",
+      "status": "PASS",
+      "detail": "type=FeatureCollection, features=0",
+      "category": "Annotations"
+    },
+    {
+      "name": "POST /auth/logout",
+      "status": "PASS",
+      "detail": "Logout realizado com sucesso",
+      "category": "Logout"
+    },
+    {
+      "name": "GET /auth/me com token invalidado -> 401",
+      "status": "PASS",
+      "detail": "got 401",
+      "category": "Logout"
+    },
+    {
+      "name": "Rate limit (429 em registros rapidos)",
+      "status": "PASS",
+      "detail": "hit after 11 requests",
+      "category": "Rate Limit"
+    }
+  ],
+  "failures": []
+}
