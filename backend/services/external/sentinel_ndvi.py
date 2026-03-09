@@ -5,6 +5,7 @@ Fallback para ExG do Esri RGB quando credenciais não configuradas.
 """
 
 import logging
+import math
 from datetime import date, timedelta
 
 import httpx
@@ -77,7 +78,6 @@ async def get_sentinel_ndvi(
 
     # Calcular bounding box a partir do centro + raio
     # ~111km por grau de latitude, ~111*cos(lat) por grau de longitude
-    import math
     lat_offset = radius_m / 111000
     lon_offset = radius_m / (111000 * math.cos(math.radians(lat)))
     bbox = [
