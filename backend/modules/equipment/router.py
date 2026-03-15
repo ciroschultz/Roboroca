@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
+from sqlalchemy.orm import selectinload
 
 from backend.core.database import get_db
 from backend.models.user import User
@@ -327,7 +328,10 @@ async def list_orders(
 ):
     """Listar pedidos do usuário."""
     result = await db.execute(
-        select(Order).where(Order.user_id == current_user.id).order_by(Order.created_at.desc())
+        select(Order)
+        .where(Order.user_id == current_user.id)
+        .options(selectinload(Order.items), selectinload(Order.status_history))
+        .order_by(Order.created_at.desc())
     )
     return result.scalars().all()
 
@@ -340,7 +344,9 @@ async def get_order(
 ):
     """Detalhe de um pedido."""
     result = await db.execute(
-        select(Order).where(Order.id == order_id, Order.user_id == current_user.id)
+        select(Order)
+        .where(Order.id == order_id, Order.user_id == current_user.id)
+        .options(selectinload(Order.items), selectinload(Order.status_history))
     )
     order = result.scalar_one_or_none()
     if not order:

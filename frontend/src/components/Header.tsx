@@ -22,6 +22,7 @@ import {
   WifiOff
 } from 'lucide-react'
 import { useNotifications, type AppNotification } from './NotificationContext'
+import EcosystemNav from './EcosystemNav'
 
 interface UserData {
   id: number
@@ -344,6 +345,8 @@ export default function Header({ title, subtitle, currentUser, onLogout, onNavig
             </div>
           )}
         </div>
+
+        <EcosystemNav currentSlug="aerial" />
 
         {/* Separador */}
         <div className="w-px h-8 bg-gray-700/50" />

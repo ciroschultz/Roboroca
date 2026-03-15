@@ -1134,7 +1134,7 @@ async def full_ml_analysis(
     db: AsyncSession = Depends(get_db),
 ):
     """Descricao completa com Machine Learning."""
-    if not ML_AVAILABLE:
+    if not ML_AVAILABLE or segment_by_color is None or classify_vegetation_type is None:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Servicos de ML nao disponiveis.",
